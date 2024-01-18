@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gtk = { version = "0.7.2", package = "gtk4", features = ["v4_12"] }
 curl = "0.4.44"
 tokio = { version = "1.33.0", features = ["full"] }
 reqwest = { version = "0.11.22", features = ["default"] }
@@ -34,3 +33,6 @@ path = "src/bin/flow-gtk.rs"
 [[bin]]
 name = "flowd"
 path = "src/bin/flowd.rs"
+
+[build-dependencies]
+glib-build-tools = "0.18.0"
