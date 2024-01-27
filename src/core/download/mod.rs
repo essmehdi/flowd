@@ -31,6 +31,7 @@ pub struct Download {
     pub resumable: bool,
     pub date_added: String,
     pub date_completed: Option<String>,
+    pub size: Option<u64>,
 }
 
 impl Download {
@@ -46,6 +47,7 @@ impl Download {
             resumable: false,
             date_added: Local::now().to_rfc3339(),
             date_completed: None,
+            size: None,
         }
     }
 
@@ -60,6 +62,7 @@ impl Download {
         self.resumable = download.resumable;
         self.date_added = download.date_added;
         self.date_completed = download.date_completed;
+        self.size = download.size;
     }
 
     async fn change_download_status(&mut self, new_status: DownloadStatus) {
@@ -280,6 +283,7 @@ impl Downloader {
 
         // Detect output file
         download_info.detected_output_file = Some(utils::get_output_file_path(&file_info, &self.config).await);
+        download_info.size = file_info.content_length;
         db::update_download(&download_info).await;
 
         log::info!(
