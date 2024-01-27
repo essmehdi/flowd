@@ -39,9 +39,13 @@ impl FlowListener {
     }
 }
 
-#[dbus_interface(name = "com.github.essmehdi.Flow")]
+#[dbus_interface(name = "com.github.essmehdi.Flowd")]
 impl FlowListener {
     // Methods
+    async fn status(&self) -> &str {
+        "UP"
+    }
+
     async fn get_all_downloads(&self) -> Vec<Download> {
         log::info!("Getting all downloads");
         db::get_all_downloads().await

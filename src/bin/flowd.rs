@@ -33,19 +33,19 @@ async fn main() -> Result<()> {
 
     // Initialize DBus connection
     let con = ConnectionBuilder::session()?
-        .name("com.github.essmehdi.Flow")?
+        .name("com.github.essmehdi.Flowd")?
         .serve_at(
-            "/com/github/essmehdi/Flow/Listener",
+            "/com/github/essmehdi/Flowd/Listener",
             FlowListener::new(tx.subscribe(), tx.clone()),
         )?
         .build()
         .await?;
 
     // Listen to signals from DownloadsController
-    let signal_ctx = SignalContext::new(&con, "/com/github/essmehdi/Flow/Broadcast")?;
+    let signal_ctx = SignalContext::new(&con, "/com/github/essmehdi/Flowd/Broadcast")?;
     let listener = con
         .object_server()
-        .interface::<_, FlowListener>("/com/github/essmehdi/Flow/Listener")
+        .interface::<_, FlowListener>("/com/github/essmehdi/Flowd/Listener")
         .await?;
     tokio::spawn(async move {
         listener.get().await.listen_to_events(signal_ctx).await;
