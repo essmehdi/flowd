@@ -3,8 +3,9 @@ use std::path::Path;
 use mime_guess::get_mime_extensions_str;
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::header::HeaderMap;
+use tokio::fs;
 
-use crate::{core::config::Config, utils};
+use crate::{core::config::Config, utils::{self, path::expand}};
 
 use super::FileInfo;
 
@@ -45,8 +46,18 @@ pub fn get_file_info_from_headers(url: &str, headers: &HeaderMap) -> FileInfo {
         .unwrap_or(false);
 
     let ct_extension = match &content_type {
-        Some(ct) => get_mime_extensions_str(&ct).unwrap().first().unwrap(),
-        None => "",
+        Some(ct) => {
+            get_mime_extensions_str(&ct)
+                .and_then(|ext| {
+                    if ext.len() > 0 {
+                        Some(ext[0])
+                    } else { 
+                        None 
+                    }
+                })
+                .unwrap_or("")
+        },
+        None => ""
     };
 
     // Deduce file name
@@ -117,17 +128,25 @@ pub async fn get_output_file_path(file_info: &FileInfo, config: &Config) -> Stri
 }
 
 pub async fn get_temp_file(config: &Config) -> String {
+    let expanded_temp_directory = expand(&config.temp_directory);
+    let temp_directory = Path::new(&expanded_temp_directory);
+
+    if !Path::new(&temp_directory).is_dir() {
+        fs::create_dir_all(&temp_directory).await.unwrap();
+    }
+
     let random_file_name = rand::thread_rng()
         .sample_iter(Alphanumeric)
         .take(10)
         .map(char::from)
         .collect::<String>();
 
-    let temp_file = Path::new(&config.temp_directory)
+    let temp_file = temp_directory
         .join(random_file_name)
         .to_str()
         .unwrap()
         .to_string();
+
     temp_file
 }
 
