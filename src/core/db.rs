@@ -102,6 +102,7 @@ pub async fn new_download(download: &Download) -> i64 {
                 &download.resumable.to_string(),
                 &download.date_added,
                 download.date_completed.as_deref().or(Some("NULL")).unwrap(),
+                &download.size.and_then(|size| Some(size.to_string())).unwrap_or("NULL".to_string())
             ],
         )
         .unwrap();
@@ -124,7 +125,7 @@ async fn get_downloads_from_query(query: &str, params: impl Params) -> Vec<Downl
             resumable: row.get::<usize, String>(7)?.parse::<bool>().unwrap(),
             date_added: row.get(8)?,
             date_completed: string_to_option(row.get(9)?),
-            size: row.get(10)?,
+            size: row.get(10).ok(),
         })
     });
 
@@ -213,7 +214,7 @@ pub async fn update_download(download: &Download) {
             temp_file = ?6,
             resumable = ?7,
             date_added = ?8,
-            date_completed = ?9
+            date_completed = ?9,
             size = ?10
         WHERE id = ?11
         ",
