@@ -124,8 +124,8 @@ async fn get_downloads_from_query(query: &str, params: impl Params) -> Vec<Downl
             output_file: string_to_option(row.get(5)?),
             temp_file: row.get(6)?,
             resumable: row.get::<usize, String>(7)?.parse::<bool>().unwrap(),
-            date_added: row.get(8)?,
-            date_completed: string_to_option(row.get(9)?).and_then(|date| Some(date.parse::<i64>().unwrap())),
+            date_added: row.get::<usize, i64>(8)?,
+            date_completed: row.get::<usize, i64>(9).ok(),
             size: row.get(10).ok(),
         })
     });
