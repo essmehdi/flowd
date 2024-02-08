@@ -14,13 +14,8 @@ async fn main() -> Result<()> {
 
     let (tx, _) = broadcast::channel::<DownloadEvent>(32);
 
-    // Get config from file
-    let config = config::get_config().await;
-    let config_arc = Arc::new(config);
-
     // Initialize downloads controller
     let downloader_arc = Arc::new(Downloader::new(
-        Arc::clone(&config_arc),
         tx.clone(),
         tx.subscribe(),
     ));
@@ -52,7 +47,9 @@ async fn main() -> Result<()> {
     });
 
     loop {
-        pending_downloads_checker(Arc::clone(&downloader_arc), config_arc.max_sim_downloads).await;
+        // TODO: Reload config only when needed by watching the config file
+        let config = config::get_config().await;
+        pending_downloads_checker(Arc::clone(&downloader_arc), config.max_sim_downloads).await;
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }

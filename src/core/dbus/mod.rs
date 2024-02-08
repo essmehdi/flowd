@@ -6,7 +6,7 @@ use zbus_macros::dbus_interface;
 
 use crate::core::db;
 
-use super::download::{DownloadEvent, Download};
+use super::{config::Config, download::{DownloadEvent, Download}};
 
 pub struct FlowListener {
     events_rx: Arc<Mutex<Receiver<DownloadEvent>>>,

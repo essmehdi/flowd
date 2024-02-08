@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use zbus::zvariant::Type;
 use std::env;
 use std::{collections::HashMap, path::Path};
 use tokio::{
@@ -8,7 +9,8 @@ use tokio::{
 
 use crate::utils;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Type, Clone)]
+#[zvariant(signature = "dict")]
 pub struct Config {
     pub default_directory: String,
     pub temp_directory: String,
@@ -17,7 +19,8 @@ pub struct Config {
     pub max_sim_downloads: u16,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Type, Clone)]
+#[zvariant(signature = "dict")]
 pub struct Category {
     pub extensions: Vec<String>,
     pub directory: String,

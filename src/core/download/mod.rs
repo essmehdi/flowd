@@ -11,9 +11,9 @@ use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
-use zbus::{dbus_interface, fdo, Result, SignalContext};
+use zbus::fdo;
 
-use super::config::Config;
+use super::config::{self, Config};
 use super::db;
 
 mod utils;
@@ -151,14 +151,12 @@ pub struct Downloader {
     pause_requests: Arc<Mutex<HashSet<i64>>>,
     cancel_requests: Arc<Mutex<HashSet<i64>>>,
     downloading: Arc<Mutex<HashSet<i64>>>,
-    config: Arc<Config>,
     events_tx: Sender<DownloadEvent>,
     events_rx: Arc<Mutex<Receiver<DownloadEvent>>>,
 }
 
 impl Downloader {
     pub fn new(
-        config: Arc<Config>,
         tx: Sender<DownloadEvent>,
         rx: Receiver<DownloadEvent>,
     ) -> Downloader {
@@ -166,7 +164,6 @@ impl Downloader {
             pause_requests: Arc::new(Mutex::new(HashSet::new())),
             cancel_requests: Arc::new(Mutex::new(HashSet::new())),
             downloading: Arc::new(Mutex::new(HashSet::new())),
-            config,
             events_tx: tx,
             events_rx: Arc::new(Mutex::new(rx)),
         }
@@ -185,7 +182,8 @@ impl Downloader {
     }
 
     pub async fn new_download(&self, url: String, confirm: bool) {
-        let mut download_info = Download::get_download_from_url(url, &self.config).await;
+        let config = config::get_config().await;
+        let mut download_info = Download::get_download_from_url(url, &config).await;
         download_info.data_confirmed = confirm;
         db::new_download(&download_info).await;
     }
@@ -203,6 +201,8 @@ impl Downloader {
      * It is used to start a download that has been added to database
      */
     pub async fn download(&self, download_id: i64) -> fdo::Result<()> {
+        let config = config::get_config().await;
+
         log::info!("Starting download #{}", download_id);
         self.downloading.lock().await.insert(download_id);
 
@@ -243,7 +243,7 @@ impl Downloader {
             .unwrap();
 
         // Create client
-        let mut client_builder = reqwest::Client::builder().user_agent(&self.config.user_agent);
+        let mut client_builder = reqwest::Client::builder().user_agent(&config.user_agent);
 
         // Start from byte if resumed download
         if let Some(byte) = start_byte {
@@ -282,7 +282,7 @@ impl Downloader {
         let file_info = utils::get_file_info_from_headers(&resp.url().as_str(), resp.headers());
 
         // Detect output file
-        download_info.detected_output_file = Some(utils::get_output_file_path(&file_info, &self.config).await);
+        download_info.detected_output_file = Some(utils::get_output_file_path(&file_info, &config).await);
         download_info.size = file_info.content_length;
         db::update_download(&download_info).await;
 
@@ -378,7 +378,7 @@ impl Downloader {
         } else {
             match &download_info.detected_output_file {
                 Some(output_file) => output_file.clone(),
-                None => utils::get_output_file_path(&file_info, &self.config).await,
+                None => utils::get_output_file_path(&file_info, &config).await,
             }
         };
 
