@@ -173,6 +173,9 @@ pub fn get_conflict_free_file_path(file_path: &str) -> String {
             &format!("{}.{}", &file_name_without_extension, &file_extension),
             &format!("{} ({})", &file_name_without_extension, i),
         );
+        if file_extension.len() > 0 {
+            file_path = format!("{}.{}", file_path, file_extension);
+        }
         i += 1;
     }
     file_path
