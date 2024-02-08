@@ -29,8 +29,8 @@ pub struct Download {
     pub output_file: Option<String>,
     pub temp_file: String,
     pub resumable: bool,
-    pub date_added: String,
-    pub date_completed: Option<String>,
+    pub date_added: i64,
+    pub date_completed: Option<i64>,
     pub size: Option<u64>,
 }
 
@@ -45,7 +45,7 @@ impl Download {
             detected_output_file: None,
             output_file: None,
             resumable: false,
-            date_added: Local::now().to_rfc3339(),
+            date_added: Local::now().timestamp(),
             date_completed: None,
             size: None,
         }
@@ -410,7 +410,11 @@ impl Downloader {
             .await
             .unwrap();
 
+        
         log::info!("Download #{}: Completed", &download_id);
+
+        download_info.date_completed = Some(Local::now().timestamp());
+        db::update_download(&download_info).await;
 
         // Change download status to completed
         download_info

@@ -42,8 +42,8 @@ async fn init_db() {
             output_file TEXT,            
             temp_file TEXT,
             resumable INTEGER NOT NULL,
-            date_added TEXT NOT NULL,
-            date_completed TEXT,
+            date_added INTEGER NOT NULL,
+            date_completed INTEGER,
             size INTEGER
         )
         ",
@@ -59,6 +59,7 @@ async fn connect() -> Result<Connection> {
 }
 
 pub async fn new_download(download: &Download) -> i64 {
+    let completed_date = download.date_completed.and_then(|d| Some(d.to_string())).or(Some("NULL".to_string())).unwrap();
     let connection = connect().await.unwrap();
     connection
         .execute(
@@ -100,8 +101,8 @@ pub async fn new_download(download: &Download) -> i64 {
                 download.output_file.as_deref().or(Some("NULL")).unwrap(),
                 &download.temp_file,
                 &download.resumable.to_string(),
-                &download.date_added,
-                download.date_completed.as_deref().or(Some("NULL")).unwrap(),
+                &download.date_added.to_string(),
+                &completed_date,
                 &download.size.and_then(|size| Some(size.to_string())).unwrap_or("NULL".to_string())
             ],
         )
@@ -124,7 +125,7 @@ async fn get_downloads_from_query(query: &str, params: impl Params) -> Vec<Downl
             temp_file: row.get(6)?,
             resumable: row.get::<usize, String>(7)?.parse::<bool>().unwrap(),
             date_added: row.get(8)?,
-            date_completed: string_to_option(row.get(9)?),
+            date_completed: string_to_option(row.get(9)?).and_then(|date| Some(date.parse::<i64>().unwrap())),
             size: row.get(10).ok(),
         })
     });
@@ -200,6 +201,7 @@ pub async fn get_downloads_by_category(category: &str) -> Vec<Download> {
 }
 
 pub async fn update_download(download: &Download) {
+    let completed_date = download.date_completed.and_then(|d| Some(d.to_string())).or(Some("NULL".to_string())).unwrap();
     let connection = connect().await.unwrap();
     connection
         .execute(
@@ -230,10 +232,9 @@ pub async fn update_download(download: &Download) {
                 download.output_file.as_deref().or(Some("NULL")).unwrap(),
                 &download.temp_file,
                 &download.resumable.to_string(),
-                &download.date_added,
-                download.date_completed.as_deref().or(Some("NULL")).unwrap(),
-                &download.size.and_then(|size| Some(size.to_string())).unwrap_or("NULL".to_string()),
-                &download.id.to_string(),
+                &download.date_added.to_string(),
+                &completed_date,
+                &download.size.and_then(|size| Some(size.to_string())).unwrap_or("NULL".to_string())
             ],
         )
         .unwrap();
