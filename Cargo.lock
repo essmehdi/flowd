@@ -535,7 +535,6 @@ dependencies = [
  "curl",
  "env_logger",
  "event-listener 4.0.0",
- "glib-build-tools",
  "log",
  "mime_guess",
  "rand",
@@ -667,12 +666,6 @@ name = "gimli"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fb8d784f27acf97159b40fc4db5ecd8aa23b9ad5ef69cdd136d3bc80665f0c0"
-
-[[package]]
-name = "glib-build-tools"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3431c56f463443cba9bc3600248bc6d680cb614c2ee1cdd39dab5415bd12ac5c"
 
 [[package]]
 name = "h2"

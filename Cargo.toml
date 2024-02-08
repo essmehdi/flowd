@@ -27,12 +27,5 @@ name = "flow_lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "flow_gtk"
-path = "src/bin/flow-gtk.rs"
-
-[[bin]]
 name = "flowd"
 path = "src/bin/flowd.rs"
-
-[build-dependencies]
-glib-build-tools = "0.18.0"
