@@ -406,10 +406,18 @@ impl Downloader {
         }
 
         // Move file from temp to output
-        tokio::fs::rename(&download_info.temp_file, file_output)
+        tokio::fs::rename(&download_info.temp_file, &file_output)
             .await
             .unwrap();
 
+        // Save conflict free path to database
+        if !download_info.output_file.is_none() && download_info.output_file.as_ref().unwrap() != &file_output {
+            download_info.output_file = Some(file_output);
+            db::update_download(&download_info).await;
+        } else if download_info.output_file.is_none() && download_info.detected_output_file.as_ref().unwrap() != &file_output {
+            download_info.output_file = Some(file_output);
+            db::update_download(&download_info).await;
+        }
         
         log::info!("Download #{}: Completed", &download_id);
 
