@@ -234,7 +234,8 @@ pub async fn update_download(download: &Download) {
                 &download.resumable.to_string(),
                 &download.date_added.to_string(),
                 &completed_date,
-                &download.size.and_then(|size| Some(size.to_string())).unwrap_or("NULL".to_string())
+                &download.size.and_then(|size| Some(size.to_string())).unwrap_or("NULL".to_string()),
+                &download.id.to_string(),
             ],
         )
         .unwrap();
