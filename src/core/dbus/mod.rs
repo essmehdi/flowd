@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
-use tokio::sync::{broadcast::{Receiver, Sender}, Mutex};
-use zbus::{SignalContext, Result};
+use tokio::sync::{
+    broadcast::{Receiver, Sender},
+    Mutex,
+};
+use zbus::{Result, SignalContext};
 use zbus_macros::dbus_interface;
 
 use crate::core::db;
 
-use super::download::{DownloadEvent, Download};
+use super::download::{Download, DownloadEvent};
 
 pub struct FlowListener {
     events_rx: Arc<Mutex<Receiver<DownloadEvent>>>,
@@ -28,11 +31,15 @@ impl FlowListener {
         while let Ok(event) = self.events_rx.lock().await.recv().await {
             match event {
                 DownloadEvent::DownloadProgress(id, progress, content_length) => {
-                    FlowListener::notify_download_progress(&ctx, id, progress, content_length).await.unwrap();
-                },
+                    Self::notify_download_progress(&ctx, id, progress, content_length)
+                        .await
+                        .unwrap();
+                }
                 DownloadEvent::DownloadUpdate(download_info) => {
-                    FlowListener::notify_download_update(&ctx, download_info).await.unwrap();
-                },
+                    Self::notify_download_update(&ctx, download_info)
+                        .await
+                        .unwrap();
+                }
                 _ => {}
             }
         }
@@ -63,6 +70,11 @@ impl FlowListener {
     async fn get_downloads_by_category(&self, category: &str) -> Vec<Download> {
         log::info!("Getting downloads by category: {}", category);
         db::get_downloads_by_category(category).await
+    }
+
+    async fn get_sorted_downloads(&self) -> Vec<Download> {
+        log::info!("Getting sorted downloads");
+        db::get_sorted_downloads().await
     }
 
     async fn new_download_wait_confirm(&self, url: &str) -> &str {
@@ -132,7 +144,8 @@ impl FlowListener {
     async fn notify_download_error(ctx: &SignalContext<'_>, id: i64, error: &str) -> Result<()>;
 
     #[dbus_interface(signal)]
-    async fn notify_download_update(ctx: &SignalContext<'_>, download_info: Download) -> Result<()>;
+    async fn notify_download_update(ctx: &SignalContext<'_>, download_info: Download)
+        -> Result<()>;
 
     #[dbus_interface(signal)]
     async fn notify_download_progress(

@@ -1,10 +1,10 @@
-use rusqlite::{Connection, Params, Result, params_from_iter};
+use rusqlite::{params_from_iter, Connection, Params, Result};
 use std::path::Path;
 use tokio::fs::{self, File};
 
 use crate::{core::download::DownloadStatus, utils};
 
-use super::{download::Download, config};
+use super::{config, download::Download};
 
 const DB_DIR: &str = "~/.local/share/flow/";
 const DB_NAME: &str = "downloads.db";
@@ -59,7 +59,11 @@ async fn connect() -> Result<Connection> {
 }
 
 pub async fn new_download(download: &Download) -> i64 {
-    let completed_date = download.date_completed.and_then(|d| Some(d.to_string())).or(Some("NULL".to_string())).unwrap();
+    let completed_date = download
+        .date_completed
+        .and_then(|d| Some(d.to_string()))
+        .or(Some("NULL".to_string()))
+        .unwrap();
     let connection = connect().await.unwrap();
     connection
         .execute(
@@ -103,7 +107,10 @@ pub async fn new_download(download: &Download) -> i64 {
                 &download.resumable.to_string(),
                 &download.date_added.to_string(),
                 &completed_date,
-                &download.size.and_then(|size| Some(size.to_string())).unwrap_or("NULL".to_string())
+                &download
+                    .size
+                    .and_then(|size| Some(size.to_string()))
+                    .unwrap_or("NULL".to_string()),
             ],
         )
         .unwrap();
@@ -156,6 +163,20 @@ pub async fn get_pending_downloads() -> Vec<Download> {
     .await
 }
 
+pub async fn get_sorted_downloads() -> Vec<Download> {
+    get_downloads_from_query(
+        "SELECT * FROM downloads ORDER BY CASE WHEN status = ?1 THEN 1 WHEN status = ?2 THEN 2 WHEN status = ?3 THEN 3 WHEN status = ?4 THEN 4 WHEN status = ?5 THEN 6 ELSE 5 END, date_added DESC",
+        [
+            DownloadStatus::InProgress.get_string(),
+            DownloadStatus::Starting.get_string(),
+            DownloadStatus::Pending.get_string(),
+            DownloadStatus::Paused.get_string(),
+            DownloadStatus::Completed.get_string(),
+        ],
+    )
+    .await
+}
+
 pub async fn get_in_progress_downloads() -> Vec<Download> {
     get_downloads_from_query(
         "SELECT * FROM downloads WHERE status = ?1",
@@ -186,22 +207,27 @@ pub async fn get_downloads_by_category(category: &str) -> Vec<Download> {
 
     let mut conditions: Vec<String> = vec![];
     for i in 0..category.extensions.len() {
-        conditions.push(format!("output_file LIKE %?{} OR detected_output_file LIKE %?{}", i, i));
+        conditions.push(format!(
+            "output_file LIKE %?{} OR detected_output_file LIKE %?{}",
+            i, i
+        ));
     }
-
 
     let query = format!("SELECT * FROM downloads WHERE {}", conditions.join(" OR "));
     // let extensions = category.extensions.iter().map(|x| x.as_str()).collect::<[&str]>()
-    let downloads = get_downloads_from_query(
-        query.as_str(),
-        params_from_iter(category.extensions.iter())
-    ).await;
+    let downloads =
+        get_downloads_from_query(query.as_str(), params_from_iter(category.extensions.iter()))
+            .await;
 
     downloads
 }
 
 pub async fn update_download(download: &Download) {
-    let completed_date = download.date_completed.and_then(|d| Some(d.to_string())).or(Some("NULL".to_string())).unwrap();
+    let completed_date = download
+        .date_completed
+        .and_then(|d| Some(d.to_string()))
+        .or(Some("NULL".to_string()))
+        .unwrap();
     let connection = connect().await.unwrap();
     connection
         .execute(
@@ -234,7 +260,10 @@ pub async fn update_download(download: &Download) {
                 &download.resumable.to_string(),
                 &download.date_added.to_string(),
                 &completed_date,
-                &download.size.and_then(|size| Some(size.to_string())).unwrap_or("NULL".to_string()),
+                &download
+                    .size
+                    .and_then(|size| Some(size.to_string()))
+                    .unwrap_or("NULL".to_string()),
                 &download.id.to_string(),
             ],
         )
