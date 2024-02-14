@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         .await?;
 
     // Listen to signals from DownloadsController
-    let signal_ctx = SignalContext::new(&con, "/com/github/essmehdi/Flowd/Broadcast")?;
+    let signal_ctx = SignalContext::new(&con, "/com/github/essmehdi/Flowd/Listener")?;
     let listener = con
         .object_server()
         .interface::<_, FlowListener>("/com/github/essmehdi/Flowd/Listener")
