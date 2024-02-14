@@ -9,7 +9,7 @@ use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, Instant};
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
 use zbus::fdo;
 
@@ -317,6 +317,7 @@ impl Downloader {
 
         // Get temp file size in case of resuming
         let mut progress = file.metadata().await.unwrap().len();
+        let mut progress_mark = Instant::now();
         while let Some(chunk) = resp.chunk().await.unwrap() {
             // Check cancel requests
             if self.cancel_requests.lock().await.contains(&download_id) {
@@ -352,13 +353,16 @@ impl Downloader {
 
             file.write_all(&chunk).await.unwrap();
             progress += chunk.len() as u64;
-            self.events_tx
-                .send(DownloadEvent::DownloadProgress(
-                    download_id,
-                    progress,
-                    file_info.content_length.unwrap_or(0),
-                ))
-                .unwrap();
+            if (Instant::now() - progress_mark) > Duration::from_secs(1) {
+                progress_mark = Instant::now();
+                self.events_tx
+                    .send(DownloadEvent::DownloadProgress(
+                        download_id,
+                        progress,
+                        file_info.content_length.unwrap_or(0),
+                    ))
+                    .unwrap();
+            }
         }
 
         // Wait for file metadata confirmation

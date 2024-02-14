@@ -46,7 +46,7 @@ impl FlowListener {
     }
 }
 
-#[dbus_interface(name = "com.github.essmehdi.Flowd")]
+#[zbus::interface(name = "com.github.essmehdi.Flowd")]
 impl FlowListener {
     // Methods
     async fn status(&self) -> &str {
@@ -140,14 +140,14 @@ impl FlowListener {
     }
 
     // Signals
-    #[dbus_interface(signal)]
+    #[zbus(signal)]
     async fn notify_download_error(ctx: &SignalContext<'_>, id: i64, error: &str) -> Result<()>;
 
-    #[dbus_interface(signal)]
+    #[zbus(signal)]
     async fn notify_download_update(ctx: &SignalContext<'_>, download_info: Download)
         -> Result<()>;
 
-    #[dbus_interface(signal)]
+    #[zbus(signal)]
     async fn notify_download_progress(
         ctx: &SignalContext<'_>,
         id: i64,

@@ -15,12 +15,12 @@ mime_guess = "2.0.4"
 log = "0.4.20"
 rusqlite = "0.29.0"
 chrono = "0.4.31"
-zbus = { version = "3.14.1", default-features = false, features = ["tokio"] }
+zbus = { version = "4.0.1", default-features = false, features = ["tokio"] }
 shellexpand = "3.1.0"
 rand = "0.8.5"
 env_logger = "0.10.0"
 event-listener = "4.0.0"
-zbus_macros = "3.14.1"
+zbus_macros = "4.0.1"
 regex = "1.10.3"
 
 [lib]
