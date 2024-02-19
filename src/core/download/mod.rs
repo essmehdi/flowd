@@ -18,6 +18,9 @@ use super::db;
 
 mod utils;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone, Type, SerializeDict, DeserializeDict)]
 #[zvariant(signature = "dict")]
 pub struct Download {
