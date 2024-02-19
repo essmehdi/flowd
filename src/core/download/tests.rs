@@ -5,11 +5,11 @@ fn test_get_conflict_free_file_path() {
     use super::utils::get_conflict_free_file_path;
 
     {
-        let test_file = TestFile::new("/home/mehdi/Projects/flow-rs/10MB-TESTFILE.ORG.pdf");
+        let test_file = TestFile::new("10MB-TESTFILE.ORG.pdf");
         let test = get_conflict_free_file_path(&test_file.file_path);
         assert_eq!(
             test,
-            "/home/mehdi/Projects/flow-rs/10MB-TESTFILE.ORG (1).pdf"
+            "10MB-TESTFILE.ORG (1).pdf"
         );
     }
 
