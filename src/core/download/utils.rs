@@ -1,7 +1,8 @@
-use std::path::Path;
+use std::{ops::Index, path::Path};
 
 use mime_guess::get_mime_extensions_str;
 use rand::{distributions::Alphanumeric, Rng};
+use regex::Regex;
 use reqwest::header::HeaderMap;
 use tokio::fs;
 
@@ -150,33 +151,50 @@ pub async fn get_temp_file(config: &Config) -> String {
     temp_file
 }
 
-/// This function is used to check for file name conflicts
 pub fn get_conflict_free_file_path(file_path: &str) -> String {
-    // TODO: Fix complex extensions (e.g.: .tar.gz)
-    let mut file_path = file_path.to_string();
+
+    let special_extensions = [
+        ".tar.gz",
+        ".tar.xz",
+        ".tar.bz2",
+        ".tar.lz",
+        ".tar.lzma",
+        ".tar.lzo",
+        ".tar.lz4",
+        ".tar.Z",
+    ];
+
+    let file_path = Path::new(file_path);
+    let file_path_parent = file_path.parent().unwrap();
+
+    let mut special_extension = "";
+    let ends_with_special_extension = special_extensions.iter().any(|ext| {
+        special_extension = ext;
+        file_path.to_str().unwrap().ends_with(ext)
+    });
+    
+    let mut file_path_split = if ends_with_special_extension {
+        let file_stem = file_path.to_str().unwrap().split(special_extension).collect::<Vec<&str>>();
+        let file_stem = file_stem[0];
+        vec![file_stem, &special_extension[1..]]
+    } else {
+        vec![file_path.file_stem().unwrap().to_str().unwrap(), file_path.extension().unwrap().to_str().unwrap()]
+    };
+
+    if Regex::new(r" \(\d+\)$").unwrap().is_match(file_path_split[0]) {
+        let conflict_number_index = file_path_split[0].rfind(" (").unwrap();
+        file_path_split[0] = &file_path_split[0][..conflict_number_index];
+    }
+
     let mut i = 1;
-    while Path::new(&file_path).exists() {
-        let file_name = Path::new(&file_path)
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        let file_extension = Path::new(&file_path)
-            .extension()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        let file_name_without_extension = file_name.replace(&format!(".{}", &file_extension), "");
-        file_path = file_path.replace(
-            &format!("{}.{}", &file_name_without_extension, &file_extension),
-            &format!("{} ({})", &file_name_without_extension, i),
-        );
-        if file_extension.len() > 0 {
-            file_path = format!("{}.{}", file_path, file_extension);
-        }
+    
+    let mut new_file_path = file_path_parent.join(file_path_split.join("."));
+    while new_file_path.exists() {
+        let file_stem = file_path_split[0];
+        let file_extension = file_path_split[1];
+        new_file_path = file_path_parent.join(format!("{} ({}).{}", file_stem, i, file_extension));
         i += 1;
     }
-    file_path
+
+    new_file_path.to_str().unwrap().to_string()
 }
