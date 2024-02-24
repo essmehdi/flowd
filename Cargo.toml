@@ -22,6 +22,7 @@ env_logger = "0.10.0"
 event-listener = "4.0.0"
 zbus_macros = "4.0.1"
 regex = "1.10.3"
+urlencoding = "2.1.3"
 
 [lib]
 name = "flow_lib"

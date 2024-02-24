@@ -3,8 +3,9 @@ use std::{ops::Index, path::Path};
 use mime_guess::get_mime_extensions_str;
 use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
-use reqwest::header::HeaderMap;
+use reqwest::{header::HeaderMap, Url};
 use tokio::fs;
+use urlencoding::decode;
 
 use crate::{core::config::Config, utils::{self, path::expand}};
 
@@ -21,6 +22,7 @@ use super::FileInfo;
 ///
 /// * `FileInfo` - The file info
 pub fn get_file_info_from_headers(url: &str, headers: &HeaderMap) -> FileInfo {
+
     // Get file content type
     let content_type = headers.get("content-type").and_then(|ct| {
         ct.to_str()
@@ -32,8 +34,17 @@ pub fn get_file_info_from_headers(url: &str, headers: &HeaderMap) -> FileInfo {
     let file_name_from_header = headers.get("content-disposition").and_then(|ct| {
         ct.to_str()
             .ok()
-            .and_then(|ct| ct.find("filename=").and_then(|i| Some(i + 9)))
-            .and_then(|i| Some(ct.to_str().unwrap()[i..ct.len() - 1].to_string()))
+            .and_then(|ct| {
+                if let Some(index) = ct.find("filename=\"") {
+                    Some(index + 10)
+                } else {
+                    if let Some(index) = ct.find("filename=") {
+                        Some(index + 9)
+                    } else {
+                        None
+                    }
+                }
+            }).and_then(|i| Some(ct.to_str().unwrap()[i..ct.len() - 1].to_string()))
     });
 
     // Check if file is resumable
@@ -64,20 +75,25 @@ pub fn get_file_info_from_headers(url: &str, headers: &HeaderMap) -> FileInfo {
     // Deduce file name
     let file_name = match file_name_from_header {
         None => {
-            let mut name = url.split("/").last().unwrap().to_string();
-            if name.is_empty() {
-                name = "download".to_string();
-            }
-            if name.ends_with(&ct_extension) {
-                name
+            let last_url_segment = 
+                Url::parse(url)
+                    .unwrap()
+                    .path_segments()
+                    .and_then(|segments| segments.last())
+                    .unwrap_or("download")
+                    .to_string();
+            if last_url_segment.ends_with(&ct_extension) {
+                last_url_segment
             } else {
-                format!("{}.{}", name, ct_extension)
+                format!("{}.{}", last_url_segment, ct_extension)
             }
         }
         Some(name) => name,
     };
+    dbg!(&file_name);
+    let file_name  = decode(&file_name).unwrap().into_owned();
 
-    return FileInfo {
+    FileInfo {
         file_name,
         content_length: headers.get("content-length").and_then(|ct_len| {
             ct_len
@@ -87,7 +103,7 @@ pub fn get_file_info_from_headers(url: &str, headers: &HeaderMap) -> FileInfo {
         }),
         content_type,
         resumable,
-    };
+    }
 }
 
 /// This function detects the file category and gets the output file path according to config
