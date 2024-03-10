@@ -10,8 +10,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration, Instant};
-use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
 use zbus::fdo;
+use zbus::zvariant::{DeserializeDict, SerializeDict, Type};
 
 use super::config::{self, Config};
 use super::db;
@@ -159,10 +159,7 @@ pub struct Downloader {
 }
 
 impl Downloader {
-    pub fn new(
-        tx: Sender<DownloadEvent>,
-        rx: Receiver<DownloadEvent>,
-    ) -> Downloader {
+    pub fn new(tx: Sender<DownloadEvent>, rx: Receiver<DownloadEvent>) -> Downloader {
         Downloader {
             pause_requests: Arc::new(Mutex::new(HashSet::new())),
             cancel_requests: Arc::new(Mutex::new(HashSet::new())),
@@ -209,15 +206,15 @@ impl Downloader {
         log::info!("Starting download #{}", download_id);
         self.downloading.lock().await.insert(download_id);
 
-        let mut download_info = db::get_download_by_id(download_id).await;
+        let mut download = db::get_download_by_id(download_id).await;
 
         let mut start_byte: Option<u128> = None;
 
         // Check if the download was already completed
-        if let DownloadStatus::Completed = download_info.status {
+        if let DownloadStatus::Completed = download.status {
             log::error!(
                 "Download #{}: Download is already completed",
-                &download_info.id
+                &download.id
             );
 
             self.downloading.lock().await.remove(&download_id);
@@ -225,12 +222,12 @@ impl Downloader {
         }
 
         // Check if the download was already started and paused
-        if let DownloadStatus::Paused = download_info.status {
-            log::info!("Download #{}: Resuming download", &download_info.id);
+        if let DownloadStatus::Paused = download.status {
+            log::info!("Download #{}: Resuming download", &download.id);
 
             let temp_file = OpenOptions::new()
                 .read(true)
-                .open(&download_info.temp_file)
+                .open(&download.temp_file)
                 .await
                 .unwrap();
 
@@ -238,11 +235,11 @@ impl Downloader {
             start_byte = Some(downloaded_size as u128);
         }
 
-        download_info
+        download
             .change_download_status(DownloadStatus::Starting)
             .await;
         self.events_tx
-            .send(DownloadEvent::DownloadUpdate(download_info.clone()))
+            .send(DownloadEvent::DownloadUpdate(download.clone()))
             .unwrap();
 
         // Create client
@@ -256,17 +253,17 @@ impl Downloader {
         }
         let client = client_builder.build().unwrap();
 
-        download_info
+        download
             .change_download_status(DownloadStatus::InProgress)
             .await;
         self.events_tx
-            .send(DownloadEvent::DownloadUpdate(download_info.clone()))
+            .send(DownloadEvent::DownloadUpdate(download.clone()))
             .unwrap();
 
         log::debug!("Download #{}: Sending request...", &download_id);
 
         // Perform request
-        let mut resp = client.get(&download_info.url).send().await.unwrap();
+        let mut resp = client.get(&download.url).send().await.unwrap();
 
         // Check if request was successful
         if let Err(err) = resp.error_for_status_ref() {
@@ -274,7 +271,7 @@ impl Downloader {
 
             db::change_download_status(&download_id, &DownloadStatus::ServerError).await;
             self.events_tx
-                .send(DownloadEvent::DownloadUpdate(download_info))
+                .send(DownloadEvent::DownloadUpdate(download))
                 .unwrap();
 
             self.downloading.lock().await.remove(&download_id);
@@ -285,9 +282,10 @@ impl Downloader {
         let file_info = utils::get_file_info_from_headers(&resp.url().as_str(), resp.headers());
 
         // Detect output file
-        download_info.detected_output_file = Some(utils::get_output_file_path(&file_info, &config).await);
-        download_info.size = file_info.content_length;
-        db::update_download(&download_info).await;
+        download.detected_output_file =
+            Some(utils::get_output_file_path(&file_info, &config).await);
+        download.size = file_info.content_length;
+        db::update_download(&download).await;
 
         log::info!(
             "Download #{}: Detected file name {}",
@@ -297,10 +295,10 @@ impl Downloader {
 
         // Check if file is resumable
         if file_info.resumable {
-            download_info.resumable = true;
-            db::update_download(&download_info).await;
+            download.resumable = true;
+            db::update_download(&download).await;
             self.events_tx
-                .send(DownloadEvent::DownloadUpdate(download_info.clone()))
+                .send(DownloadEvent::DownloadUpdate(download.clone()))
                 .unwrap();
         }
 
@@ -308,14 +306,14 @@ impl Downloader {
         let mut file = OpenOptions::new()
             .append(true)
             .create(true)
-            .open(&download_info.temp_file)
+            .open(&download.temp_file)
             .await
             .unwrap();
 
         log::debug!(
             "Download #{}: Writing to {}",
             &download_id,
-            &download_info.temp_file
+            &download.temp_file
         );
 
         // Get temp file size in case of resuming
@@ -324,33 +322,12 @@ impl Downloader {
         while let Some(chunk) = resp.chunk().await.unwrap() {
             // Check cancel requests
             if self.cancel_requests.lock().await.contains(&download_id) {
-                log::info!("Download #{}: Cancelled", &download_id);
-                download_info
-                    .change_download_status(DownloadStatus::Canceled)
-                    .await;
-                self.events_tx
-                    .send(DownloadEvent::DownloadUpdate(download_info.clone()))
-                    .unwrap();
-
-                // Delete temp file
-                tokio::fs::remove_file(&download_info.temp_file)
-                    .await
-                    .unwrap();
-
-                self.downloading.lock().await.remove(&download_id);
+                self.cancel_download(&mut download).await;
                 return Ok(());
             }
             // Check pause requests
             if self.pause_requests.lock().await.contains(&download_id) {
-                log::info!("Download #{}: Paused", &download_id);
-                download_info
-                    .change_download_status(DownloadStatus::Paused)
-                    .await;
-                self.events_tx
-                    .send(DownloadEvent::DownloadUpdate(download_info.clone()))
-                    .unwrap();
-
-                self.downloading.lock().await.remove(&download_id);
+                self.pause_download(&mut download).await;
                 return Ok(());
             }
 
@@ -369,21 +346,21 @@ impl Downloader {
         }
 
         // Wait for file metadata confirmation
-        download_info.refresh_data_from_db().await;
-        while !&download_info.data_confirmed {
+        download.refresh_data_from_db().await;
+        while !&download.data_confirmed {
             log::info!(
                 "Download #{}: Waiting for download data confirmation...",
                 &download_id
             );
             sleep(Duration::from_secs(1)).await;
-            download_info.refresh_data_from_db().await;
+            download.refresh_data_from_db().await;
         }
 
         // Get output path
-        let file_output = if let Some(user_output_file) = &download_info.output_file {
+        let file_output = if let Some(user_output_file) = &download.output_file {
             user_output_file.clone()
         } else {
-            match &download_info.detected_output_file {
+            match &download.detected_output_file {
                 Some(output_file) => output_file.clone(),
                 None => utils::get_output_file_path(&file_info, &config).await,
             }
@@ -403,43 +380,81 @@ impl Downloader {
             log::error!(
                 "Download #{}: Output directory {} does not exist",
                 &download_id,
-                output_path_parent.unwrap_or(Path::new("")).to_str().unwrap()
+                output_path_parent
+                    .unwrap_or(Path::new(""))
+                    .to_str()
+                    .unwrap()
             );
-            download_info.change_download_status(DownloadStatus::ClientError).await;
+            download
+                .change_download_status(DownloadStatus::ClientError)
+                .await;
             self.events_tx
-                .send(DownloadEvent::DownloadUpdate(download_info))
+                .send(DownloadEvent::DownloadUpdate(download))
                 .unwrap();
             return Ok(());
         }
 
         // Move file from temp to output
-        tokio::fs::rename(&download_info.temp_file, &file_output)
+        tokio::fs::rename(&download.temp_file, &file_output)
             .await
             .unwrap();
 
         // Save conflict free path to database
-        if !download_info.output_file.is_none() && download_info.output_file.as_ref().unwrap() != &file_output {
-            download_info.output_file = Some(file_output);
-            db::update_download(&download_info).await;
-        } else if download_info.output_file.is_none() && download_info.detected_output_file.as_ref().unwrap() != &file_output {
-            download_info.output_file = Some(file_output);
-            db::update_download(&download_info).await;
+        if !download.output_file.is_none()
+            && download.output_file.as_ref().unwrap() != &file_output
+        {
+            download.output_file = Some(file_output);
+            db::update_download(&download).await;
+        } else if download.output_file.is_none()
+            && download.detected_output_file.as_ref().unwrap() != &file_output
+        {
+            download.output_file = Some(file_output);
+            db::update_download(&download).await;
         }
-        
+
         log::info!("Download #{}: Completed", &download_id);
 
-        download_info.date_completed = Some(Local::now().timestamp());
-        db::update_download(&download_info).await;
+        download.date_completed = Some(Local::now().timestamp());
+        db::update_download(&download).await;
 
         // Change download status to completed
-        download_info
+        download
             .change_download_status(DownloadStatus::Completed)
             .await;
         self.events_tx
-            .send(DownloadEvent::DownloadUpdate(download_info))
+            .send(DownloadEvent::DownloadUpdate(download))
             .unwrap();
 
         self.downloading.lock().await.remove(&download_id);
         Ok(())
+    }
+
+    async fn pause_download(&self, download: &mut Download) {
+        log::info!("Download #{}: Paused", &download.id);
+        download
+            .change_download_status(DownloadStatus::Paused)
+            .await;
+        self.events_tx
+            .send(DownloadEvent::DownloadUpdate(download.clone()))
+            .unwrap();
+
+        self.downloading.lock().await.remove(&download.id);
+    }
+
+    async fn cancel_download(&self, download: &mut Download) {
+        log::info!("Download #{}: Cancelled", &download.id);
+        download
+            .change_download_status(DownloadStatus::Canceled)
+            .await;
+        self.events_tx
+            .send(DownloadEvent::DownloadUpdate(download.clone()))
+            .unwrap();
+
+        // Delete temp file
+        tokio::fs::remove_file(&download.temp_file)
+            .await
+            .unwrap();
+
+        self.downloading.lock().await.remove(&download.id);
     }
 }
