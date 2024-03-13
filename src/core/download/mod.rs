@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::fs::OpenOptions;
+use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::Mutex;
@@ -144,6 +144,7 @@ pub enum DownloadEvent {
     // Events
     NewDownload(String, bool),
     PauseDownload(i64),
+    ResumeDownload(i64),
     CancelDownload(i64),
     // Signals
     DownloadProgress(i64, u64, u64),
@@ -176,6 +177,9 @@ impl Downloader {
                     self.new_download(url, confirm).await;
                 }
                 DownloadEvent::PauseDownload(id) => self.request_pause(id).await,
+                DownloadEvent::ResumeDownload(id) => {
+                    db::change_download_status(&id, &DownloadStatus::Pending).await
+                }
                 _ => {}
             }
         }
@@ -221,18 +225,23 @@ impl Downloader {
             return Ok(());
         }
 
-        // Check if the download was already started and paused
-        if let DownloadStatus::Paused = download.status {
-            log::info!("Download #{}: Resuming download", &download.id);
-
+        // Check if temp file has data
+        if fs::try_exists(&download.temp_file).await.unwrap_or(false) {
             let temp_file = OpenOptions::new()
                 .read(true)
                 .open(&download.temp_file)
                 .await
                 .unwrap();
-
+    
             let downloaded_size = temp_file.metadata().await.unwrap().len();
-            start_byte = Some(downloaded_size as u128);
+            if downloaded_size > 0 {
+                if download.resumable {
+                    log::info!("Download #{}: Resuming download from byte {}", &download_id, downloaded_size);
+                    start_byte = Some(downloaded_size as u128);
+                } else {
+                    temp_file.set_len(0).await.unwrap();
+                }
+            }
         }
 
         download
@@ -282,9 +291,13 @@ impl Downloader {
         let file_info = utils::get_file_info_from_headers(&resp.url().as_str(), resp.headers());
 
         // Detect output file
-        download.detected_output_file =
-            Some(utils::get_output_file_path(&file_info, &config).await);
-        download.size = file_info.content_length;
+        if let None = download.detected_output_file {
+            download.detected_output_file =
+                Some(utils::get_output_file_path(&file_info, &config).await);
+        }
+        if let None = download.size {
+            download.size = file_info.content_length;
+        }
         db::update_download(&download).await;
 
         log::info!(
@@ -339,7 +352,7 @@ impl Downloader {
                     .send(DownloadEvent::DownloadProgress(
                         download_id,
                         progress,
-                        file_info.content_length.unwrap_or(0),
+                        download.size.unwrap_or(0),
                     ))
                     .unwrap();
             }
@@ -438,7 +451,7 @@ impl Downloader {
             .send(DownloadEvent::DownloadUpdate(download.clone()))
             .unwrap();
 
-        self.downloading.lock().await.remove(&download.id);
+        self.pause_requests.lock().await.remove(&download.id);
     }
 
     async fn cancel_download(&self, download: &mut Download) {
@@ -455,6 +468,6 @@ impl Downloader {
             .await
             .unwrap();
 
-        self.downloading.lock().await.remove(&download.id);
+        self.cancel_requests.lock().await.remove(&download.id);
     }
 }
