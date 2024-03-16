@@ -79,7 +79,17 @@ pub fn get_file_info_from_headers(url: &str, headers: &HeaderMap) -> FileInfo {
                 Url::parse(url)
                     .unwrap()
                     .path_segments()
-                    .and_then(|segments| segments.last())
+                    .and_then(|segments| {
+                        let last_segment = segments.last();
+                        if let Some(seg) = last_segment {
+                            if seg == "" {
+                                return None;
+                            }
+                            last_segment
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or("download")
                     .to_string();
             if last_url_segment.ends_with(&ct_extension) {
@@ -168,6 +178,8 @@ pub async fn get_temp_file(config: &Config) -> String {
 }
 
 pub fn get_conflict_free_file_path(file_path: &str) -> String {
+
+    log::debug!("Getting conflict free file path for {}", file_path);
 
     let special_extensions = [
         ".tar.gz",

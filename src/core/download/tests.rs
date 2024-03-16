@@ -1,4 +1,4 @@
- use reqwest::header::{HeaderMap, CONTENT_DISPOSITION};
+ use reqwest::header::{HeaderMap, CONTENT_DISPOSITION, CONTENT_TYPE};
 
 use crate::utils::tests::TestFile;
 
@@ -80,8 +80,8 @@ fn test_get_file_info_from_headers_no_attachment() {
     headers.insert(
         CONTENT_DISPOSITION, 
         "filename=\"testfile.txt\"".parse().unwrap()
-    );
-
+        );
+    
     let test = get_file_info_from_headers(url, &headers);
 
     assert_eq!(
@@ -138,4 +138,50 @@ fn test_get_file_info_from_headers_no_headers_url_special_chars() {
         test.content_type,
         None
     );
+}
+
+#[test]
+fn test_get_file_info_from_headers_no_path_segment() {
+    
+        let url = "https://test.com/";
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE, 
+            "text/html".parse().unwrap()
+        );    
+        let test = get_file_info_from_headers(url, &headers);
+    
+        assert_eq!(
+            test.file_name,
+            "download.htm"
+        );
+        assert_eq!(
+            test.resumable,
+            false
+        );
+        assert_eq!(
+            test.content_type,
+            Some("text/html".to_string())
+        );
+}
+
+#[test]
+fn test_get_file_info_from_headers_no_path_segment_no_content_type() {
+    
+        let url = "https://test.com/";
+        let mut headers = HeaderMap::new();
+        let test = get_file_info_from_headers(url, &headers);
+    
+        assert_eq!(
+            test.file_name,
+            "download"
+        );
+        assert_eq!(
+            test.resumable,
+            false
+        );
+        assert_eq!(
+            test.content_type,
+            None
+        );
 }
