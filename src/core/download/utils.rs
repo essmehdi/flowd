@@ -1,4 +1,4 @@
-use std::{ops::Index, path::Path};
+use std::path::Path;
 
 use mime_guess::get_mime_extensions_str;
 use rand::{distributions::Alphanumeric, Rng};

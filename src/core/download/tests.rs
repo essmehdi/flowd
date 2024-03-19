@@ -169,7 +169,7 @@ fn test_get_file_info_from_headers_no_path_segment() {
 fn test_get_file_info_from_headers_no_path_segment_no_content_type() {
     
         let url = "https://test.com/";
-        let mut headers = HeaderMap::new();
+        let headers = HeaderMap::new();
         let test = get_file_info_from_headers(url, &headers);
     
         assert_eq!(

@@ -5,7 +5,6 @@ use tokio::sync::{
     Mutex,
 };
 use zbus::{Result, SignalContext};
-use zbus_macros::dbus_interface;
 
 use crate::core::db;
 
