@@ -206,68 +206,19 @@ impl Downloader {
      */
     pub async fn download(&self, download_id: i64) -> fdo::Result<()> {
         let config = config::get_config().await;
-
+        
         log::info!("Starting download #{}", download_id);
-        self.downloading.lock().await.insert(download_id);
-
+        
         let mut download = db::get_download_by_id(download_id).await;
-
         let mut start_byte: Option<u128> = None;
 
-        // Check if the download was already completed
-        if let DownloadStatus::Completed = download.status {
-            log::error!(
-                "Download #{}: Download is already completed",
-                &download.id
-            );
+        self.prepare_download(&mut download, &mut start_byte).await;
 
-            self.downloading.lock().await.remove(&download_id);
-            return Ok(());
-        }
+        self.update_download_status_and_notify(&mut download, DownloadStatus::Starting).await;
 
-        // Check if temp file has data
-        if fs::try_exists(&download.temp_file).await.unwrap_or(false) {
-            let temp_file = OpenOptions::new()
-                .read(true)
-                .open(&download.temp_file)
-                .await
-                .unwrap();
-    
-            let downloaded_size = temp_file.metadata().await.unwrap().len();
-            if downloaded_size > 0 {
-                if download.resumable {
-                    log::info!("Download #{}: Resuming download from byte {}", &download_id, downloaded_size);
-                    start_byte = Some(downloaded_size as u128);
-                } else {
-                    temp_file.set_len(0).await.unwrap();
-                }
-            }
-        }
+        let client = self.create_client(start_byte, &config).await;
 
-        download
-            .change_download_status(DownloadStatus::Starting)
-            .await;
-        self.events_tx
-            .send(DownloadEvent::DownloadUpdate(download.clone()))
-            .unwrap();
-
-        // Create client
-        let mut client_builder = reqwest::Client::builder().user_agent(&config.user_agent);
-
-        // Start from byte if resumed download
-        if let Some(byte) = start_byte {
-            let mut headers = HeaderMap::new();
-            headers.insert(RANGE, format!("bytes={}-", byte).parse().unwrap());
-            client_builder = client_builder.default_headers(headers);
-        }
-        let client = client_builder.build().unwrap();
-
-        download
-            .change_download_status(DownloadStatus::InProgress)
-            .await;
-        self.events_tx
-            .send(DownloadEvent::DownloadUpdate(download.clone()))
-            .unwrap();
+        self.update_download_status_and_notify(&mut download, DownloadStatus::InProgress).await;
 
         log::debug!("Download #{}: Sending request...", &download_id);
 
@@ -278,10 +229,7 @@ impl Downloader {
         if let Err(err) = resp.error_for_status_ref() {
             log::error!("Download #{}: Unsuccessful response: {}", &download_id, err);
 
-            db::change_download_status(&download_id, &DownloadStatus::ServerError).await;
-            self.events_tx
-                .send(DownloadEvent::DownloadUpdate(download))
-                .unwrap();
+            self.update_download_status_and_notify(&mut download, DownloadStatus::ServerError).await;
 
             self.downloading.lock().await.remove(&download_id);
             return Ok(());
@@ -298,7 +246,7 @@ impl Downloader {
         if let None = download.size {
             download.size = file_info.content_length;
         }
-        db::update_download(&download).await;
+        self.update_download_in_db_and_notify(&download).await;
 
         log::info!(
             "Download #{}: Detected file name {}",
@@ -309,10 +257,7 @@ impl Downloader {
         // Check if file is resumable
         if file_info.resumable {
             download.resumable = true;
-            db::update_download(&download).await;
-            self.events_tx
-                .send(DownloadEvent::DownloadUpdate(download.clone()))
-                .unwrap();
+            self.update_download_in_db_and_notify(&download).await;
         }
 
         // Write content to temp file
@@ -398,12 +343,7 @@ impl Downloader {
                     .to_str()
                     .unwrap()
             );
-            download
-                .change_download_status(DownloadStatus::ClientError)
-                .await;
-            self.events_tx
-                .send(DownloadEvent::DownloadUpdate(download))
-                .unwrap();
+            self.update_download_status_and_notify(&mut download, DownloadStatus::ClientError).await;
             return Ok(());
         }
 
@@ -413,35 +353,83 @@ impl Downloader {
             .unwrap();
 
         // Save conflict free path to database
-        if !download.output_file.is_none()
-            && download.output_file.as_ref().unwrap() != &file_output
-        {
+        if (!download.output_file.is_none() && download.output_file.as_ref().unwrap() != &file_output)
+            || (download.output_file.is_none() && download.detected_output_file.as_ref().unwrap() != &file_output) {
+
             download.output_file = Some(file_output);
-            db::update_download(&download).await;
-        } else if download.output_file.is_none()
-            && download.detected_output_file.as_ref().unwrap() != &file_output
-        {
-            download.output_file = Some(file_output);
-            db::update_download(&download).await;
+            self.update_download_in_db_and_notify(&download).await;
         }
 
         log::info!("Download #{}: Completed", &download_id);
 
         download.date_completed = Some(Local::now().timestamp());
-        db::update_download(&download).await;
+        self.update_download_in_db_and_notify(&download).await;
 
         // Change download status to completed
-        download
-            .change_download_status(DownloadStatus::Completed)
-            .await;
-        self.events_tx
-            .send(DownloadEvent::DownloadUpdate(download))
-            .unwrap();
+        self.update_download_status_and_notify(&mut download, DownloadStatus::Completed).await;
 
         self.downloading.lock().await.remove(&download_id);
         Ok(())
     }
 
+    /// Prepare download by checking if temp file has data and setting start byte
+    /// 
+    /// # Arguments
+    /// 
+    /// * `download` - The download to be prepared
+    /// * `start_byte` - The byte to start from if resumed download
+    async fn prepare_download(&self, download: &mut Download, start_byte: &mut Option<u128>) {
+        self.downloading.lock().await.insert(download.id);
+
+        // Check if temp file has data
+        if fs::try_exists(&download.temp_file).await.unwrap_or(false) {
+            let temp_file = OpenOptions::new()
+                .read(true)
+                .open(&download.temp_file)
+                .await
+                .unwrap();
+    
+            let downloaded_size = temp_file.metadata().await.unwrap().len();
+            if downloaded_size > 0 {
+                if download.resumable {
+                    log::info!("Download #{}: Resuming download from byte {}", &download.id, downloaded_size);
+                    *start_byte = Some(downloaded_size as u128);
+                } else {
+                    temp_file.set_len(0).await.unwrap();
+                }
+            }
+        }
+    }
+
+    /// Create client with user agent and bytes header if resumed download
+    /// 
+    /// # Arguments
+    /// 
+    /// * `start_byte` - The byte to start from if resumed download
+    /// * `config` - The configuration to get user agent from
+    ///
+    /// # Returns
+    /// 
+    /// * `reqwest::Client` - The new Reqwest client
+    async fn create_client(&self, start_byte: Option<u128>, config: &Config) -> reqwest::Client {
+        // Create client
+        let mut client_builder = reqwest::Client::builder().user_agent(&config.user_agent);
+
+        // Start from byte if resumed download
+        if let Some(byte) = start_byte {
+            let mut headers = HeaderMap::new();
+            headers.insert(RANGE, format!("bytes={}-", byte).parse().unwrap());
+            client_builder = client_builder.default_headers(headers);
+        }
+        
+        client_builder.build().unwrap()
+    }
+
+    /// Pause download, save in database and notify in DBus
+    /// 
+    /// # Arguments
+    /// 
+    /// * `download` - The download to be paused
     async fn pause_download(&self, download: &mut Download) {
         log::info!("Download #{}: Paused", &download.id);
         download
@@ -454,6 +442,11 @@ impl Downloader {
         self.pause_requests.lock().await.remove(&download.id);
     }
 
+    /// Cancel download and delete temp file
+    /// 
+    /// # Arguments
+    /// 
+    /// * `download` - The download to be cancelled
     async fn cancel_download(&self, download: &mut Download) {
         log::info!("Download #{}: Cancelled", &download.id);
         download
@@ -469,5 +462,32 @@ impl Downloader {
             .unwrap();
 
         self.cancel_requests.lock().await.remove(&download.id);
+    }
+
+    /// Change download status, save in database and notify in DBus
+    /// 
+    /// # Arguments
+    /// 
+    /// * `download` - The download to update status for
+    /// * `new_status` - The new status to be set
+    async fn update_download_status_and_notify(&self, download: &mut Download, new_status: DownloadStatus) {
+        download
+            .change_download_status(new_status)
+            .await;
+        self.events_tx
+            .send(DownloadEvent::DownloadUpdate(download.clone()))
+            .unwrap();
+    }
+
+    /// Save download changes in database and notify in DBus 
+    /// 
+    /// # Arguments
+    /// 
+    /// * `download` - The download with new data to be save in db
+    async fn update_download_in_db_and_notify(&self, download: &Download) {
+        db::update_download(download).await;
+        self.events_tx
+            .send(DownloadEvent::DownloadUpdate(download.clone()))
+            .unwrap();
     }
 }
