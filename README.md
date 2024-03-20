@@ -4,13 +4,18 @@ A download manager daemon for Linux written in Rust. This is part of the major a
 
 The GUI I will support is a GNOME application.
 
-**This project is still in early development.**
+**This project is still in early development and unstable.**
+
+Docs are coming soon! :)
+
+## Features
+
+- [x] Manage downloads
+- [x] Auto-categorize downloads 
+- [ ] Queuing and scheduling
+- [ ] Multi-connections downloads
+- [ ] Support more protocols
 
 ## API
 
 To communicate with the daemon, it exposes a DBus interface. You will be able to manage downloads through it.
-
-
-
-
-
