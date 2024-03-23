@@ -145,6 +145,7 @@ pub enum DownloadEvent {
     NewDownload(String, bool),
     PauseDownload(i64),
     ResumeDownload(i64),
+    RestartDownload(i64),
     CancelDownload(i64),
     // Signals
     DownloadProgress(i64, u64, u64),
@@ -178,6 +179,19 @@ impl Downloader {
                 }
                 DownloadEvent::PauseDownload(id) => self.request_pause(id).await,
                 DownloadEvent::ResumeDownload(id) => {
+                    db::change_download_status(&id, &DownloadStatus::Pending).await
+                },
+                DownloadEvent::RestartDownload(id) => {
+                    let download = db::get_download_by_id(id).await;
+                    if fs::try_exists(&download.temp_file).await.unwrap_or(false) {
+                        let temp_file = OpenOptions::new()
+                            .read(true)
+                            .open(&download.temp_file)
+                            .await
+                            .unwrap();
+
+                        temp_file.set_len(0).await.unwrap();
+                    }
                     db::change_download_status(&id, &DownloadStatus::Pending).await
                 },
                 DownloadEvent::CancelDownload(id) => self.request_cancel(id).await,
@@ -459,10 +473,13 @@ impl Downloader {
             .send(DownloadEvent::DownloadUpdate(download.clone()))
             .unwrap();
 
-        // Delete temp file
-        tokio::fs::remove_file(&download.temp_file)
-            .await
-            .unwrap();
+        // Trim temp file
+        let temp_file = OpenOptions::new()
+                .read(true)
+                .open(&download.temp_file)
+                .await
+                .unwrap();
+        temp_file.set_len(0).await.unwrap();
 
         self.cancel_requests.lock().await.remove(&download.id);
     }

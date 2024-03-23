@@ -115,6 +115,17 @@ impl FlowListener {
         }
     }
 
+    async fn restart_download(&self, id: i64) -> &str {
+        log::info!("Restart download with id: {}", id);
+        match self.events_tx.send(DownloadEvent::RestartDownload(id)) {
+            Ok(_) => "OK",
+            Err(err) => {
+                log::error!("Error sending restart download event: {}", err);
+                "ERROR"
+            }
+        }
+    }
+
     async fn resume_download(&self, id: i64) -> &str {
         log::info!("Resuming download with id: {}", id);
         match self.events_tx.send(DownloadEvent::ResumeDownload(id)) {
