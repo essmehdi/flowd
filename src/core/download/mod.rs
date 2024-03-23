@@ -179,7 +179,8 @@ impl Downloader {
                 DownloadEvent::PauseDownload(id) => self.request_pause(id).await,
                 DownloadEvent::ResumeDownload(id) => {
                     db::change_download_status(&id, &DownloadStatus::Pending).await
-                }
+                },
+                DownloadEvent::CancelDownload(id) => self.request_cancel(id).await,
                 _ => {}
             }
         }
