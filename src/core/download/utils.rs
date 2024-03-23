@@ -100,7 +100,7 @@ pub fn get_file_info_from_headers(url: &str, headers: &HeaderMap) -> FileInfo {
         }
         Some(name) => name,
     };
-    dbg!(&file_name);
+    
     let file_name  = decode(&file_name).unwrap().into_owned();
 
     FileInfo {
