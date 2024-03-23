@@ -277,7 +277,19 @@ impl Downloader {
         // Get temp file size in case of resuming
         let mut progress = file.metadata().await.unwrap().len();
         let mut progress_mark = Instant::now();
+        let initial_progress_mark = progress_mark.clone();
         while let Some(chunk) = resp.chunk().await.unwrap() {
+            if (Instant::now() - progress_mark) > Duration::from_millis(250) || initial_progress_mark == progress_mark {
+                progress_mark = Instant::now();
+                self.events_tx
+                    .send(DownloadEvent::DownloadProgress(
+                        download_id,
+                        progress,
+                        download.size.unwrap_or(0),
+                    ))
+                    .unwrap();
+            }
+
             // Check cancel requests
             if self.cancel_requests.lock().await.contains(&download_id) {
                 self.cancel_download(&mut download).await;
@@ -291,16 +303,6 @@ impl Downloader {
 
             file.write_all(&chunk).await.unwrap();
             progress += chunk.len() as u64;
-            if (Instant::now() - progress_mark) > Duration::from_secs(1) {
-                progress_mark = Instant::now();
-                self.events_tx
-                    .send(DownloadEvent::DownloadProgress(
-                        download_id,
-                        progress,
-                        download.size.unwrap_or(0),
-                    ))
-                    .unwrap();
-            }
         }
 
         // Wait for file metadata confirmation
