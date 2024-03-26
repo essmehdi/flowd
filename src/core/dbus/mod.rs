@@ -148,6 +148,17 @@ impl FlowListener {
         }
     }
 
+    async fn delete_download(&self, id: i64) -> &str {
+        log::info!("Deleting download with id: {}", id);
+        match self.events_tx.send(DownloadEvent::DeleteDownload(id)) {
+            Ok(_) => "OK",
+            Err(err) => {
+                log::error!("Error sending delete download event: {}", err);
+                "ERROR"
+            }
+        }
+    }
+
     async fn change_output_file_path(&self, id: i64, new_path: &str) -> &str {
         log::info!("Changing output file path for download with id: {}", id);
         db::change_download_output_file_path(id, new_path).await;

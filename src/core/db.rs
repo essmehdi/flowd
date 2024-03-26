@@ -270,6 +270,19 @@ pub async fn update_download(download: &Download) {
         .unwrap();
 }
 
+pub async fn delete_download(download_id: i64) {
+    let connection = connect().await.unwrap();
+    connection
+        .execute(
+            "
+        DELETE FROM downloads
+        WHERE id = ?1
+        ",
+            &[&download_id.to_string()],
+        )
+        .unwrap();
+}
+
 pub async fn change_download_status(download_id: &i64, status: &DownloadStatus) {
     let connection = connect().await.unwrap();
     connection

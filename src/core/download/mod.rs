@@ -72,6 +72,17 @@ impl Download {
         self.status = new_status;
         db::change_download_status(&self.id, &self.status).await;
     }
+
+    fn is_idle(&self) -> bool {
+        match self.status {
+            DownloadStatus::Paused | 
+            DownloadStatus::Canceled |
+            DownloadStatus::ClientError |
+            DownloadStatus::ServerError |
+            DownloadStatus::UnknownError => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Type, Serialize, Deserialize)]
@@ -147,6 +158,7 @@ pub enum DownloadEvent {
     ResumeDownload(i64),
     RestartDownload(i64),
     CancelDownload(i64),
+    DeleteDownload(i64),
     // Signals
     DownloadProgress(i64, u64, u64),
     DownloadUpdate(Download),
@@ -177,24 +189,42 @@ impl Downloader {
                 DownloadEvent::NewDownload(url, confirm) => {
                     self.new_download(url, confirm).await;
                 }
-                DownloadEvent::PauseDownload(id) => self.request_pause(id).await,
+                DownloadEvent::PauseDownload(id) => {
+                    if self.downloading.lock().await.contains(&id) {
+                        self.request_pause(id).await;
+                    }
+                },
                 DownloadEvent::ResumeDownload(id) => {
-                    db::change_download_status(&id, &DownloadStatus::Pending).await
+                    let download = db::get_download_by_id(id).await;
+                    if let DownloadStatus::Paused = download.status {
+                        db::change_download_status(&id, &DownloadStatus::Pending).await;
+                    }
                 },
                 DownloadEvent::RestartDownload(id) => {
                     let download = db::get_download_by_id(id).await;
-                    if fs::try_exists(&download.temp_file).await.unwrap_or(false) {
-                        let temp_file = OpenOptions::new()
-                            .read(true)
-                            .open(&download.temp_file)
-                            .await
-                            .unwrap();
-
-                        temp_file.set_len(0).await.unwrap();
+                    log::debug!("Download #{} idle: {}", id, download.is_idle());
+                    if download.is_idle() {
+                        if fs::try_exists(&download.temp_file).await.unwrap_or(false) {
+                            utils::empty_temp_file(&download.temp_file).await;
+                        }
+                        db::change_download_status(&id, &DownloadStatus::Pending).await;
                     }
-                    db::change_download_status(&id, &DownloadStatus::Pending).await
+                    
                 },
-                DownloadEvent::CancelDownload(id) => self.request_cancel(id).await,
+                DownloadEvent::CancelDownload(id) => {
+                    if self.downloading.lock().await.contains(&id) {
+                        self.request_cancel(id).await
+                    } else {
+                        let mut download = db::get_download_by_id(id).await;
+                        self.cancel_download(&mut download).await
+                    }
+                },
+                DownloadEvent::DeleteDownload(id) => {
+                    let download = db::get_download_by_id(id).await;
+                    if download.is_idle() {
+                        db::delete_download(id).await;
+                    }
+                }
                 _ => {}
             }
         }
@@ -308,11 +338,13 @@ impl Downloader {
             // Check cancel requests
             if self.cancel_requests.lock().await.contains(&download_id) {
                 self.cancel_download(&mut download).await;
+                self.downloading.lock().await.remove(&download_id);
                 return Ok(());
             }
             // Check pause requests
             if self.pause_requests.lock().await.contains(&download_id) {
                 self.pause_download(&mut download).await;
+                self.downloading.lock().await.remove(&download_id);
                 return Ok(());
             }
 
@@ -473,13 +505,7 @@ impl Downloader {
             .send(DownloadEvent::DownloadUpdate(download.clone()))
             .unwrap();
 
-        // Trim temp file
-        let temp_file = OpenOptions::new()
-                .read(true)
-                .open(&download.temp_file)
-                .await
-                .unwrap();
-        temp_file.set_len(0).await.unwrap();
+        utils::empty_temp_file(&download.temp_file).await;
 
         self.cancel_requests.lock().await.remove(&download.id);
     }
