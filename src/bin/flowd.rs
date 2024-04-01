@@ -2,14 +2,14 @@ use std::sync::Arc;
 use tokio::{sync::broadcast, time::Duration};
 
 use flow_lib::core::{
-    config, db,
+    config, db::{self, DBError},
     dbus::FlowListener,
     download::{DownloadEvent, Downloader},
 };
-use zbus::{ConnectionBuilder, Result, SignalContext};
+use zbus::{self, ConnectionBuilder, SignalContext};
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> zbus::Result<()> {
     env_logger::init();
 
     let (tx, _) = broadcast::channel::<DownloadEvent>(32);
@@ -49,7 +49,12 @@ async fn main() -> Result<()> {
     loop {
         // TODO: Reload config only when needed by watching the config file
         let config = config::get_config().await;
-        pending_downloads_checker(Arc::clone(&downloader_arc), config.max_sim_downloads).await;
+        let _ = pending_downloads_checker(
+            Arc::clone(&downloader_arc), 
+            config.max_sim_downloads
+        ).await.map_err(|e| {
+            log::error!("Pending downloads checker: Error checking for pending downloads: {:?}", e);
+        });
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
@@ -58,9 +63,10 @@ async fn main() -> Result<()> {
  * This function is used to check for pending downloads
  * and start them.
  */
-async fn pending_downloads_checker(controller: Arc<Downloader>, max_downloads: u16) {
-    let mut in_progress_downloads_count = db::get_in_progress_downloads().await.len();
-    let downloads = db::get_pending_downloads().await;
+async fn pending_downloads_checker(controller: Arc<Downloader>, max_downloads: u16) -> Result<(), DBError> {
+    let mut in_progress_downloads_count = db::get_in_progress_downloads().await?.len();
+
+    let downloads = db::get_pending_downloads().await?;
     for download in downloads {
         // Check if we reached the maximum number of downloads
         if in_progress_downloads_count >= max_downloads.into() {
@@ -72,4 +78,6 @@ async fn pending_downloads_checker(controller: Arc<Downloader>, max_downloads: u
         });
         in_progress_downloads_count += 1;
     }
+
+    Ok(())
 }

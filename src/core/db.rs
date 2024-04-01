@@ -1,10 +1,21 @@
-use rusqlite::{params_from_iter, Connection, Params, Result};
+use rusqlite;
+use rusqlite::{params_from_iter, Connection, Params};
 use std::path::Path;
 use tokio::fs::{self, File};
+use thiserror::Error;
 
 use crate::{core::download::DownloadStatus, utils};
 
 use super::{config, download::Download};
+
+#[derive(Error, Debug)]
+pub enum DBError {
+    #[error("Download #{0} not found")]
+    DownloadNotFound(i64),
+
+    #[error("Rusqlite error: {0}")]
+    RusqliteError(#[from] rusqlite::Error),
+}
 
 const DB_DIR: &str = "~/.local/share/flow/";
 const DB_NAME: &str = "downloads.db";
@@ -52,19 +63,19 @@ async fn init_db() {
         .unwrap();
 }
 
-async fn connect() -> Result<Connection> {
+async fn connect() -> rusqlite::Result<Connection> {
     init_db().await;
     let db_path = get_db_path();
     Connection::open(&db_path)
 }
 
-pub async fn new_download(download: &Download) -> i64 {
+pub async fn new_download(download: &Download) -> Result<i64, DBError> {
     let completed_date = download
         .date_completed
         .and_then(|d| Some(d.to_string()))
         .or(Some("NULL".to_string()))
         .unwrap();
-    let connection = connect().await.unwrap();
+    let connection = connect().await?;
     connection
         .execute(
             "
@@ -112,13 +123,13 @@ pub async fn new_download(download: &Download) -> i64 {
                     .and_then(|size| Some(size.to_string()))
                     .unwrap_or("NULL".to_string()),
             ],
-        )
-        .unwrap();
-    connection.last_insert_rowid()
+        )?;
+    Ok(connection.last_insert_rowid())
 }
 
-async fn get_downloads_from_query(query: &str, params: impl Params) -> Vec<Download> {
-    let connection = connect().await.unwrap();
+async fn get_downloads_from_query(query: &str, params: impl Params) -> Result<Vec<Download>, DBError> {
+    let connection = connect().await?;
+
     let mut stmt = connection.prepare(query).unwrap();
     let downloads_iter = stmt.query_map(params, |row| {
         let status: String = row.get(2).unwrap();
@@ -141,21 +152,26 @@ async fn get_downloads_from_query(query: &str, params: impl Params) -> Vec<Downl
     for download in downloads_iter.unwrap() {
         downloads.push(download.unwrap());
     }
-    downloads
+    Ok(downloads)
 }
 
-pub async fn get_all_downloads() -> Vec<Download> {
+pub async fn get_all_downloads() -> Result<Vec<Download>, DBError> {
     get_downloads_from_query("SELECT * FROM downloads", []).await
 }
 
-pub async fn get_download_by_id(id: i64) -> Download {
-    get_downloads_from_query("SELECT * FROM downloads WHERE id = ?1", [id])
-        .await
-        .pop()
-        .unwrap()
+pub async fn get_download_by_id(id: i64) -> Result<Download, DBError> {
+    let download = get_downloads_from_query("SELECT * FROM downloads WHERE id = ?1", [id])
+        .await?
+        .pop();
+
+    if let None = download {
+        return Err(DBError::DownloadNotFound(id));
+    }
+
+    Ok(download.unwrap())
 }
 
-pub async fn get_pending_downloads() -> Vec<Download> {
+pub async fn get_pending_downloads() -> Result<Vec<Download>, DBError> {
     get_downloads_from_query(
         "SELECT * FROM downloads WHERE status = ?1",
         [DownloadStatus::Pending.get_string()],
@@ -163,7 +179,7 @@ pub async fn get_pending_downloads() -> Vec<Download> {
     .await
 }
 
-pub async fn get_sorted_downloads() -> Vec<Download> {
+pub async fn get_sorted_downloads() -> Result<Vec<Download>, DBError> {
     get_downloads_from_query(
         "SELECT * FROM downloads ORDER BY CASE WHEN status = ?1 THEN 1 WHEN status = ?2 THEN 2 WHEN status = ?3 THEN 3 WHEN status = ?4 THEN 4 WHEN status = ?5 THEN 6 ELSE 5 END, date_added DESC",
         [
@@ -177,7 +193,7 @@ pub async fn get_sorted_downloads() -> Vec<Download> {
     .await
 }
 
-pub async fn get_in_progress_downloads() -> Vec<Download> {
+pub async fn get_in_progress_downloads() -> Result<Vec<Download>, DBError> {
     get_downloads_from_query(
         "SELECT * FROM downloads WHERE status = ?1",
         [DownloadStatus::InProgress.get_string()],
@@ -185,7 +201,7 @@ pub async fn get_in_progress_downloads() -> Vec<Download> {
     .await
 }
 
-pub async fn get_completed_downloads() -> Vec<Download> {
+pub async fn get_completed_downloads() -> Result<Vec<Download>, DBError> {
     get_downloads_from_query(
         "SELECT * FROM downloads WHERE status = ?1",
         [DownloadStatus::Completed.get_string()],
@@ -193,7 +209,7 @@ pub async fn get_completed_downloads() -> Vec<Download> {
     .await
 }
 
-pub async fn get_uncompleted_downloads() -> Vec<Download> {
+pub async fn get_uncompleted_downloads() -> Result<Vec<Download>, DBError> {
     get_downloads_from_query(
         "SELECT * FROM downloads WHERE status != ?1",
         [DownloadStatus::Completed.get_string()],
@@ -201,9 +217,16 @@ pub async fn get_uncompleted_downloads() -> Vec<Download> {
     .await
 }
 
-pub async fn get_downloads_by_category(category: &str) -> Vec<Download> {
+pub async fn get_downloads_by_category(category: &str) -> Result<Vec<Download>, DBError> {
     let categories = config::get_categories().await;
-    let category = categories.get(category).unwrap();
+    let the_category = categories.get(category);
+
+    if let None = the_category {
+        log::error!("Category `{}` does not exist", category);
+        return Ok(vec![]);
+    }
+
+    let category = the_category.unwrap();
 
     let mut conditions: Vec<String> = vec![];
     for i in 0..category.extensions.len() {
@@ -222,13 +245,13 @@ pub async fn get_downloads_by_category(category: &str) -> Vec<Download> {
     downloads
 }
 
-pub async fn update_download(download: &Download) {
+pub async fn update_download(download: &Download) -> Result<usize, DBError> {
     let completed_date = download
         .date_completed
         .and_then(|d| Some(d.to_string()))
         .or(Some("NULL".to_string()))
         .unwrap();
-    let connection = connect().await.unwrap();
+    let connection = connect().await?;
     connection
         .execute(
             "
@@ -266,12 +289,11 @@ pub async fn update_download(download: &Download) {
                     .unwrap_or("NULL".to_string()),
                 &download.id.to_string(),
             ],
-        )
-        .unwrap();
+        ).map_err(|e| DBError::RusqliteError(e))
 }
 
-pub async fn delete_download(download_id: i64) {
-    let connection = connect().await.unwrap();
+pub async fn delete_download(download_id: i64) -> Result<usize, DBError> {
+    let connection = connect().await?;
     connection
         .execute(
             "
@@ -279,12 +301,11 @@ pub async fn delete_download(download_id: i64) {
         WHERE id = ?1
         ",
             &[&download_id.to_string()],
-        )
-        .unwrap();
+        ).map_err(|e| DBError::RusqliteError(e))
 }
 
-pub async fn change_download_status(download_id: &i64, status: &DownloadStatus) {
-    let connection = connect().await.unwrap();
+pub async fn change_download_status(download_id: &i64, status: &DownloadStatus) -> Result<usize, DBError> {
+    let connection = connect().await?;
     connection
         .execute(
             "
@@ -293,20 +314,21 @@ pub async fn change_download_status(download_id: &i64, status: &DownloadStatus) 
         WHERE id = ?2
         ",
             &[status.get_string(), &download_id.to_string()],
-        )
-        .unwrap();
+        ).map_err(|e| DBError::RusqliteError(e))
 }
 
-pub async fn change_download_output_file_path(download_id: i64, output_file: &str) {
-    let mut download = get_download_by_id(download_id).await;
+pub async fn change_download_output_file_path(download_id: i64, output_file: &str) -> Result<(), DBError> {
+    let mut download = get_download_by_id(download_id).await?;
     download.output_file = Some(output_file.to_string());
-    update_download(&download).await;
+    update_download(&download).await?;
+    Ok(())
 }
 
-pub async fn confirm_download_data(download_id: i64) {
-    let mut download = get_download_by_id(download_id).await;
+pub async fn confirm_download_data(download_id: i64) -> Result<(), DBError> {
+    let mut download = get_download_by_id(download_id).await?;
     download.data_confirmed = true;
-    update_download(&download).await;
+    update_download(&download).await?;
+    Ok(())
 }
 
 fn string_to_option(string: String) -> Option<String> {

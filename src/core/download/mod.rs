@@ -56,6 +56,14 @@ impl Download {
 
     async fn refresh_data_from_db(&mut self) {
         let download = db::get_download_by_id(self.id).await;
+
+        if let Err(e) = download {
+            log::error!("Download #{}: {}", self.id, e);
+            return;
+        }
+
+        let download = download.unwrap();
+
         self.url = download.url;
         self.status = download.status;
         self.data_confirmed = download.data_confirmed;
@@ -196,13 +204,28 @@ impl Downloader {
                 },
                 DownloadEvent::ResumeDownload(id) => {
                     let download = db::get_download_by_id(id).await;
+
+                    if let Err(e) = download {
+                        log::error!("Download #{}: {}", id, e);
+                        return;
+                    }
+
+                    let download = download.unwrap();
+
                     if let DownloadStatus::Paused = download.status {
                         db::change_download_status(&id, &DownloadStatus::Pending).await;
                     }
                 },
                 DownloadEvent::RestartDownload(id) => {
                     let download = db::get_download_by_id(id).await;
-                    log::debug!("Download #{} idle: {}", id, download.is_idle());
+
+                    if let Err(e) = download {
+                        log::error!("Download #{}: {}", id, e);
+                        return;
+                    }
+
+                    let download = download.unwrap();
+
                     if download.is_idle() {
                         if fs::try_exists(&download.temp_file).await.unwrap_or(false) {
                             utils::empty_temp_file(&download.temp_file).await;
@@ -215,12 +238,28 @@ impl Downloader {
                     if self.downloading.lock().await.contains(&id) {
                         self.request_cancel(id).await
                     } else {
-                        let mut download = db::get_download_by_id(id).await;
+                        let download = db::get_download_by_id(id).await;
+
+                        if let Err(e) = download {
+                            log::error!("Download #{}: {}", id, e);
+                            return;
+                        }
+    
+                        let mut download = download.unwrap();    
+                    
                         self.cancel_download(&mut download).await
                     }
                 },
                 DownloadEvent::DeleteDownload(id) => {
                     let download = db::get_download_by_id(id).await;
+
+                    if let Err(e) = download {
+                        log::error!("Download #{}: {}", id, e);
+                        return;
+                    }
+
+                    let download = download.unwrap();
+
                     if download.is_idle() {
                         db::delete_download(id).await;
                     }
@@ -254,7 +293,15 @@ impl Downloader {
         
         log::info!("Starting download #{}", download_id);
         
-        let mut download = db::get_download_by_id(download_id).await;
+        let download = db::get_download_by_id(download_id).await;
+
+        if let Err(e) = download {
+            log::error!("Download #{}: {}", download_id, e);
+            return Ok(());
+        }
+
+        let mut download = download.unwrap();
+
         let mut start_byte: Option<u128> = None;
 
         self.prepare_download(&mut download, &mut start_byte).await;

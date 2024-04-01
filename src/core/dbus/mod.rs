@@ -54,26 +54,29 @@ impl FlowListener {
 
     async fn get_all_downloads(&self) -> Vec<Download> {
         log::info!("Getting all downloads");
-        db::get_all_downloads().await
+        db::get_all_downloads().await.map_err(|e| {
+            log::error!("Error getting all downloads");
+            e
+        }).unwrap_or(vec![])
     }
 
     async fn get_downloads_by_completed_status(&self, completed: bool) -> Vec<Download> {
         log::info!("Getting downloads by completed status: {}", completed);
         if completed {
-            db::get_completed_downloads().await
+            db::get_completed_downloads().await.unwrap_or(vec![])
         } else {
-            db::get_uncompleted_downloads().await
+            db::get_uncompleted_downloads().await.unwrap_or(vec![])
         }
     }
 
     async fn get_downloads_by_category(&self, category: &str) -> Vec<Download> {
         log::info!("Getting downloads by category: {}", category);
-        db::get_downloads_by_category(category).await
+        db::get_downloads_by_category(category).await.unwrap_or(vec![])
     }
 
     async fn get_sorted_downloads(&self) -> Vec<Download> {
         log::info!("Getting sorted downloads");
-        db::get_sorted_downloads().await
+        db::get_sorted_downloads().await.unwrap_or(vec![])
     }
 
     async fn new_download_wait_confirm(&self, url: &str) -> &str {
@@ -161,13 +164,19 @@ impl FlowListener {
 
     async fn change_output_file_path(&self, id: i64, new_path: &str) -> &str {
         log::info!("Changing output file path for download with id: {}", id);
-        db::change_download_output_file_path(id, new_path).await;
+        let _ = db::change_download_output_file_path(id, new_path).await.map_err(|e| {
+            log::error!("Error changing output file path for download with id: {}", id);
+            e
+        });
         "OK"
     }
 
     async fn confirm_download_data(&self, id: i64) -> &str {
         log::info!("Confirming download data for download with id: {}", id);
-        db::confirm_download_data(id).await;
+        let _ = db::confirm_download_data(id).await.map_err(|e| {
+            log::error!("Error confirming download data for download with id: {}", id);
+            e
+        });
         "OK"
     }
 
