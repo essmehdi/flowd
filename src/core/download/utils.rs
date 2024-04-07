@@ -4,7 +4,7 @@ use mime_guess::get_mime_extensions_str;
 use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
 use reqwest::{header::HeaderMap, Url};
-use tokio::fs::{self, OpenOptions};
+use tokio::{fs::{self, OpenOptions}, io};
 use urlencoding::decode;
 
 use crate::{core::config::Config, utils::{self, path::expand}};
@@ -227,11 +227,15 @@ pub fn get_conflict_free_file_path(file_path: &str) -> String {
     new_file_path.to_str().unwrap().to_string()
 }
 
-pub async fn empty_temp_file(temp_file_path: &str) {
+pub async fn empty_temp_file(temp_file_path: &str) -> Result<(), io::Error> {
     OpenOptions::new()
         .write(true)
         .truncate(true)
         .open(temp_file_path)
         .await
-        .unwrap();
+        .map(|_| ())
+        .map_err(|e| {
+            log::warn!("Could not empty temp file: {e}");
+            e
+        })
 }
