@@ -39,6 +39,11 @@ impl FlowListener {
                         .await
                         .unwrap();
                 }
+                DownloadEvent::DownloadDelete(download_id) => {
+                    Self::notify_download_delete(&ctx, download_id)
+                        .await
+                        .unwrap();
+                }
                 _ => {}
             }
         }
@@ -54,10 +59,13 @@ impl FlowListener {
 
     async fn get_all_downloads(&self) -> Vec<Download> {
         log::info!("Getting all downloads");
-        db::get_all_downloads().await.map_err(|e| {
-            log::error!("Error getting all downloads");
-            e
-        }).unwrap_or(vec![])
+        db::get_all_downloads()
+            .await
+            .map_err(|e| {
+                log::error!("Error getting all downloads");
+                e
+            })
+            .unwrap_or(vec![])
     }
 
     async fn get_downloads_by_completed_status(&self, completed: bool) -> Vec<Download> {
@@ -71,7 +79,9 @@ impl FlowListener {
 
     async fn get_downloads_by_category(&self, category: &str) -> Vec<Download> {
         log::info!("Getting downloads by category: {}", category);
-        db::get_downloads_by_category(category).await.unwrap_or(vec![])
+        db::get_downloads_by_category(category)
+            .await
+            .unwrap_or(vec![])
     }
 
     async fn get_sorted_downloads(&self) -> Vec<Download> {
@@ -164,17 +174,25 @@ impl FlowListener {
 
     async fn change_output_file_path(&self, id: i64, new_path: &str) -> &str {
         log::info!("Changing output file path for download with id: {}", id);
-        let _ = db::change_download_output_file_path(id, new_path).await.map_err(|e| {
-            log::error!("Error changing output file path for download with id: {}", id);
-            e
-        });
+        let _ = db::change_download_output_file_path(id, new_path)
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "Error changing output file path for download with id: {}",
+                    id
+                );
+                e
+            });
         "OK"
     }
 
     async fn confirm_download_data(&self, id: i64) -> &str {
         log::info!("Confirming download data for download with id: {}", id);
         let _ = db::confirm_download_data(id).await.map_err(|e| {
-            log::error!("Error confirming download data for download with id: {}", id);
+            log::error!(
+                "Error confirming download data for download with id: {}",
+                id
+            );
             e
         });
         "OK"
@@ -187,6 +205,9 @@ impl FlowListener {
     #[zbus(signal)]
     async fn notify_download_update(ctx: &SignalContext<'_>, download_info: Download)
         -> Result<()>;
+
+    #[zbus(signal)]
+    async fn notify_download_delete(ctx: &SignalContext<'_>, download_id: i64) -> Result<()>;
 
     #[zbus(signal)]
     async fn notify_download_progress(

@@ -239,3 +239,7 @@ pub async fn empty_temp_file(temp_file_path: &str) -> Result<(), io::Error> {
             e
         })
 }
+
+pub async fn delete_temp_file(temp_file_path: &str) -> Result<(), io::Error> {
+    tokio::fs::remove_file(temp_file_path).await
+}

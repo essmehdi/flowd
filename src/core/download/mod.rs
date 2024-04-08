@@ -180,6 +180,7 @@ pub enum DownloadEvent {
     DownloadProgress(i64, u64, u64),
     DownloadUpdate(Download),
     DownloadError(Option<i64>, String),
+    DownloadDelete(i64)
 }
 
 #[derive(Debug, Error)]
@@ -213,7 +214,7 @@ impl Downloader {
     pub async fn listen_to_dbus_events(&self) {
         while let Ok(event) = self.events_rx.lock().await.recv().await {
             _ = self.handle_event(event).await.map_err(|e| {
-                log::error!("Error handling event: {:?}", e);
+                log::error!("Error handling event: {}", e);
             });
         }
     }
@@ -254,10 +255,10 @@ impl Downloader {
                 }
             }
             DownloadEvent::DeleteDownload(id) => {
-                let download = db::get_download_by_id(id).await?;
+                let mut download = db::get_download_by_id(id).await?;
 
                 if download.is_idle() {
-                    db::delete_download(id).await?;
+                    self.delete_download(&mut download).await?;
                 }
             }
             _ => {}
@@ -603,6 +604,32 @@ impl Downloader {
         _ = utils::empty_temp_file(&download.temp_file).await;
 
         self.cancel_requests.lock().await.remove(&download.id);
+
+        Ok(())
+    }
+
+    /// Deletes a download
+    ///
+    /// # Arguments
+    ///
+    /// * `download` - The download to be cancelled
+    async fn delete_download(&self, download: &mut Download) -> Result<(), DownloaderError> {
+        log::info!("Download #{}: Deleted", &download.id);
+
+        db::delete_download(download.id).await?;
+
+        _ = utils::delete_temp_file(&download.temp_file)
+            .await
+            .map_err(|e| {
+                log::error!("{e}");
+            });
+
+        self.events_tx
+            .send(DownloadEvent::DownloadDelete(download.id))
+            .map_err(|e| {
+                log::error!("{e}");
+                e
+            })?;
 
         Ok(())
     }
