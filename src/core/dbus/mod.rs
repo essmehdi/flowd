@@ -28,23 +28,29 @@ impl FlowListener {
 
     pub async fn listen_to_events(&self, ctx: SignalContext<'_>) {
         while let Ok(event) = self.events_rx.lock().await.recv().await {
-            match event {
-                DownloadEvent::DownloadProgress(id, progress, content_length) => {
-                    Self::notify_download_progress(&ctx, id, progress, content_length)
-                        .await
-                        .unwrap();
-                }
-                DownloadEvent::DownloadUpdate(download_info) => {
-                    Self::notify_download_update(&ctx, download_info)
-                        .await
-                        .unwrap();
-                }
-                DownloadEvent::DownloadDelete(download_id) => {
-                    Self::notify_download_delete(&ctx, download_id)
-                        .await
-                        .unwrap();
-                }
-                _ => {}
+            _ = self.handle_event(&ctx, event).await.map_err(|e| {
+                log::error!("Error while processing event: {e}");
+            });
+        }
+    }
+
+    pub async fn handle_event(&self, ctx: &SignalContext<'_>, event: DownloadEvent) -> Result<()> {
+        match event {
+            DownloadEvent::DownloadProgress(id, progress, content_length) => {
+                Self::notify_download_progress(ctx, id, progress, content_length)
+                    .await
+            }
+            DownloadEvent::DownloadUpdate(download_info) => {
+                Self::notify_download_update(ctx, download_info)
+                    .await
+            }
+            DownloadEvent::DownloadDelete(download_id) => {
+                Self::notify_download_delete(ctx, download_id)
+                    .await
+            }
+            _ => {
+                log::debug!("Unhandled event received: {event:?}");
+                Ok(())
             }
         }
     }
