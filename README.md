@@ -19,3 +19,14 @@ Docs are coming soon! :)
 ## API
 
 To communicate with the daemon, it exposes a DBus interface. You will be able to manage downloads through it.
+
+## Installation
+
+Compile the daemon, then run the installation script
+
+```sh
+cargo build --release
+./install.py
+```
+
+`install.py` takes an argument `--install-path` or `-i` to change the installation path for the binary. The default path is `/usr/local/bin`
