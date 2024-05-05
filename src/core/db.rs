@@ -63,10 +63,8 @@ async fn verify_and_update_schema(init: bool) -> Result<(), DBError> {
         connection.pragma_query_value(None, "user_version", |row| Ok(row.get::<_, u16>(0)))?? + 1
         // Start from next version
     };
-
     
     let migrations = get_migrations(next_version).await?;
-    log::debug!("{}", migrations);
     let connection = connect().await?;
     connection.execute_batch(&migrations)?;
 
