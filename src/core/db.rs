@@ -73,7 +73,7 @@ async fn verify_and_update_schema(init: bool) -> Result<(), DBError> {
 
 pub async fn init() -> Result<(), DBError> {
     let db_path = get_db_path();
-    let db_exists = fs::metadata(&db_path).await.is_ok();
+    let db_exists = Path::new(&db_path).exists();
     if db_exists {
         verify_and_update_schema(false).await?;
         return Ok(());
@@ -81,9 +81,8 @@ pub async fn init() -> Result<(), DBError> {
 
     // Create DB directory and file
     fs::create_dir_all(utils::path::expand(DB_DIR))
-        .await
-        .unwrap();
-    File::create(&db_path).await.unwrap();
+        .await?;
+    File::create(&db_path).await?;
 
     verify_and_update_schema(true).await?;
 
@@ -158,7 +157,7 @@ async fn get_downloads_from_query(
 ) -> Result<Vec<Download>, DBError> {
     let connection = connect().await?;
 
-    let mut stmt = connection.prepare(query).unwrap();
+    let mut stmt = connection.prepare(query)?;
     let downloads_iter = stmt.query_map(params, |row| {
         let status: String = row.get(2).unwrap();
         Ok(Download {
@@ -174,11 +173,11 @@ async fn get_downloads_from_query(
             date_completed: row.get::<usize, i64>(9).ok(),
             size: row.get(10).ok(),
         })
-    });
+    })?;
 
     let mut downloads = Vec::new();
-    for download in downloads_iter.unwrap() {
-        downloads.push(download.unwrap());
+    for download in downloads_iter {
+        downloads.push(download?);
     }
     Ok(downloads)
 }
@@ -192,11 +191,11 @@ pub async fn get_download_by_id(id: i64) -> Result<Download, DBError> {
         .await?
         .pop();
 
-    if let None = download {
-        return Err(DBError::DownloadNotFound(id));
+    if let Some(download) = download {
+        return Ok(download);
     }
-
-    Ok(download.unwrap())
+    
+    return Err(DBError::DownloadNotFound(id));
 }
 
 pub async fn get_pending_downloads() -> Result<Vec<Download>, DBError> {
