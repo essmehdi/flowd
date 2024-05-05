@@ -1,17 +1,19 @@
 use serde::{Deserialize, Serialize};
 use zbus::zvariant::Type;
 use std::env;
+use std::str::FromStr;
 use std::{collections::HashMap, path::Path};
 use tokio::{
     fs::{self, OpenOptions},
     io::AsyncReadExt,
 };
-
 use crate::utils;
+use toml::Value;
 
 #[derive(Deserialize, Serialize, Type, Clone)]
 #[zvariant(signature = "dict")]
 pub struct Config {
+    // /!\ After changing properties, change also the updater in the impl of this struct
     pub default_directory: String,
     pub temp_directory: String,
     pub user_agent: String,
@@ -26,52 +28,62 @@ pub struct Category {
     pub directory: String,
 }
 
-const USER_CONFIG_PATH: &str = "~/.config/flow/config.toml";
-const DEFAULT_CONFIG_PATH: &str = "/etc/flow/config.toml";
+impl Config {
+    pub fn update_from_map(&mut self, config: &str) -> Result<(), toml::de::Error> {
+        let parsed_config = config.parse::<toml::Table>()?;
 
-async fn init_user_config() {
-    let user_config_path = utils::path::expand(USER_CONFIG_PATH);
-    let path = Path::new(&user_config_path);
-    
-    
-    if fs::try_exists(path).await.unwrap() {
-        return;
+        if let Some(value) = parsed_config.get("default_directory") {
+            self.default_directory = String::from_str(value.as_str().unwrap()).unwrap();
+        }
+        if let Some(value) = parsed_config.get("temp_directory") {
+            self.temp_directory = String::from_str(value.as_str().unwrap()).unwrap();
+        }
+        if let Some(value) = parsed_config.get("user_agent") {
+            self.user_agent = String::from_str(value.as_str().unwrap()).unwrap();
+        }
+        if let Some(value) = parsed_config.get("categories") {
+            let mut categories: HashMap<String, Category> = HashMap::new();
+            let parsed_categories = value.as_table().unwrap();
+            parsed_categories.keys().for_each(|key| {
+                let value = parsed_categories.get(key).unwrap();
+                let value = toml::Value::try_into::<Category>(value.clone()).unwrap();
+                categories.insert(key.clone(), value);
+            });
+            self.categories = categories;
+        }
+        if let Some(value) = parsed_config.get("max_sim_downloads") {
+            self.max_sim_downloads = u16::try_from(value.as_integer().unwrap()).unwrap();
+        }
+        Ok(())
     }
-
-    let path_parent = path.parent().unwrap();
-    if !fs::try_exists(path_parent).await.unwrap() {
-        fs::create_dir(path_parent).await.unwrap();
-    }
-
-    fs::copy(DEFAULT_CONFIG_PATH, user_config_path)
-        .await
-        .unwrap();
 }
 
+const USER_CONFIG_PATH: &str = "~/.config/flowd/config.toml";
+const ROOT_CONFIG_PATH: &str = "/etc/flowd/config.toml";
+const DEFAULT_CONFIG_PATH: &str = "/usr/share/flowd/config/config.toml";
+
 pub async fn get_config() -> Config {
-    let is_root = match env::var("USER") {
-        Ok(user) => user == "root",
-        Err(_) => false,
-    };
-
     let expanded_user_config_path = utils::path::expand(USER_CONFIG_PATH);
-    let config_path = if is_root {
-        DEFAULT_CONFIG_PATH
-    } else {
-        init_user_config().await;
-        &expanded_user_config_path
-    };
 
-    let mut file = OpenOptions::new()
-        .read(true)
-        .open(config_path)
-        .await
-        .unwrap();
+    // Get default config
+    let default_config_toml = fs::read_to_string(DEFAULT_CONFIG_PATH).await.unwrap();
+    let mut config: Config = toml::from_str(&default_config_toml).unwrap();
 
-    let mut config_toml = String::new();
-    file.read_to_string(&mut config_toml).await.unwrap();
+    // Update with system config
+    if Path::new(ROOT_CONFIG_PATH).exists() {
+        let system_config = fs::read_to_string(ROOT_CONFIG_PATH).await.unwrap();
+        config.update_from_map(&system_config).unwrap_or_else(|error| {
+            log::error!("{error}");
+        });
+    }
 
-    let config = toml::from_str(&config_toml).unwrap();
+    // Update with user config if available
+    if Path::new(&expanded_user_config_path).exists() {
+        let system_config = fs::read_to_string(&expanded_user_config_path).await.unwrap();
+        config.update_from_map(&system_config).unwrap_or_else(|error| {
+            log::error!("{error}");
+        });
+    }
 
     process_config(config)
 }

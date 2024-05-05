@@ -1,5 +1,5 @@
 default_directory = "~/Downloads"
-temp_directory = "~/.local/share/flow/temp/"
+temp_directory = "~/.local/share/flowd/temp/"
 max_sim_downloads = 5
 user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
 

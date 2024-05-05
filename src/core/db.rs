@@ -1,8 +1,9 @@
 use rusqlite;
 use rusqlite::{params_from_iter, Connection, Params};
 use std::path::Path;
-use tokio::fs::{self, File};
 use thiserror::Error;
+use tokio::fs::{self, File};
+use tokio::io;
 
 use crate::{core::download::DownloadStatus, utils};
 
@@ -15,10 +16,15 @@ pub enum DBError {
 
     #[error("Rusqlite error: {0}")]
     RusqliteError(#[from] rusqlite::Error),
+
+    #[error("IO error: {0}")]
+    IOError(#[from] io::Error),
 }
 
-const DB_DIR: &str = "~/.local/share/flow/";
+const DB_DIR: &str = "~/.local/share/flowd/";
 const DB_NAME: &str = "downloads.db";
+
+const FLOWD_MIGRATIONS_DIR: &str = "/usr/share/flowd/migrations";
 
 fn get_db_path() -> String {
     let db_path = Path::new(DB_DIR).join(DB_NAME);
@@ -26,11 +32,53 @@ fn get_db_path() -> String {
     utils::path::expand(&db_path_string)
 }
 
-async fn init_db() {
+async fn get_migrations(from_version: u16) -> Result<String, io::Error> {
+    let mut migrations = String::new();
+
+    let mut version = from_version;
+    loop {
+        let file = Path::new(FLOWD_MIGRATIONS_DIR).join(format!("{}.sql", version));
+
+        if !file.as_path().exists() {
+            break;
+        }
+
+        let sql_script = fs::read(&file).await?;
+        migrations.push_str(&String::from_utf8(sql_script).unwrap());
+
+        version += 1;
+    }
+
+    Ok(migrations)
+}
+
+async fn verify_and_update_schema(init: bool) -> Result<(), DBError> {
+    log::debug!("Verifying and updating database schema...");
+
+    let next_version = if init {
+        1
+    } else {
+        let connection = connect().await?;
+
+        connection.pragma_query_value(None, "user_version", |row| Ok(row.get::<_, u16>(0)))?? + 1
+        // Start from next version
+    };
+
+    
+    let migrations = get_migrations(next_version).await?;
+    log::debug!("{}", migrations);
+    let connection = connect().await?;
+    connection.execute_batch(&migrations)?;
+
+    Ok(())
+}
+
+pub async fn init() -> Result<(), DBError> {
     let db_path = get_db_path();
     let db_exists = fs::metadata(&db_path).await.is_ok();
     if db_exists {
-        return;
+        verify_and_update_schema(false).await?;
+        return Ok(());
     }
 
     // Create DB directory and file
@@ -39,32 +87,12 @@ async fn init_db() {
         .unwrap();
     File::create(&db_path).await.unwrap();
 
-    // Create downloads table
-    let connection = Connection::open(&db_path).unwrap();
-    connection
-        .execute(
-            "
-        CREATE TABLE IF NOT EXISTS downloads (
-            id INTEGER PRIMARY KEY,
-            url TEXT NOT NULL,
-            status TEXT NOT NULL,
-            data_confirmed INTEGER NOT NULL,
-            detected_output_file TEXT,
-            output_file TEXT,            
-            temp_file TEXT,
-            resumable INTEGER NOT NULL,
-            date_added INTEGER NOT NULL,
-            date_completed INTEGER,
-            size INTEGER
-        )
-        ",
-            (),
-        )
-        .unwrap();
+    verify_and_update_schema(true).await?;
+
+    Ok(())
 }
 
 async fn connect() -> rusqlite::Result<Connection> {
-    init_db().await;
     let db_path = get_db_path();
     Connection::open(&db_path)
 }
@@ -76,9 +104,8 @@ pub async fn new_download(download: &Download) -> Result<i64, DBError> {
         .or(Some("NULL".to_string()))
         .unwrap();
     let connection = connect().await?;
-    connection
-        .execute(
-            "
+    connection.execute(
+        "
         INSERT INTO downloads (
             url,
             status,
@@ -104,30 +131,33 @@ pub async fn new_download(download: &Download) -> Result<i64, DBError> {
             ?10
         )
         ",
-            &[
-                &download.url,
-                download.status.get_string(),
-                &download.data_confirmed.to_string(),
-                download
-                    .detected_output_file
-                    .as_deref()
-                    .or(Some("NULL"))
-                    .unwrap(),
-                download.output_file.as_deref().or(Some("NULL")).unwrap(),
-                &download.temp_file,
-                &download.resumable.to_string(),
-                &download.date_added.to_string(),
-                &completed_date,
-                &download
-                    .size
-                    .and_then(|size| Some(size.to_string()))
-                    .unwrap_or("NULL".to_string()),
-            ],
-        )?;
+        &[
+            &download.url,
+            download.status.get_string(),
+            &download.data_confirmed.to_string(),
+            download
+                .detected_output_file
+                .as_deref()
+                .or(Some("NULL"))
+                .unwrap(),
+            download.output_file.as_deref().or(Some("NULL")).unwrap(),
+            &download.temp_file,
+            &download.resumable.to_string(),
+            &download.date_added.to_string(),
+            &completed_date,
+            &download
+                .size
+                .and_then(|size| Some(size.to_string()))
+                .unwrap_or("NULL".to_string()),
+        ],
+    )?;
     Ok(connection.last_insert_rowid())
 }
 
-async fn get_downloads_from_query(query: &str, params: impl Params) -> Result<Vec<Download>, DBError> {
+async fn get_downloads_from_query(
+    query: &str,
+    params: impl Params,
+) -> Result<Vec<Download>, DBError> {
     let connection = connect().await?;
 
     let mut stmt = connection.prepare(query).unwrap();
@@ -289,7 +319,8 @@ pub async fn update_download(download: &Download) -> Result<usize, DBError> {
                     .unwrap_or("NULL".to_string()),
                 &download.id.to_string(),
             ],
-        ).map_err(|e| DBError::RusqliteError(e))
+        )
+        .map_err(|e| DBError::RusqliteError(e))
 }
 
 pub async fn delete_download(download_id: i64) -> Result<usize, DBError> {
@@ -301,10 +332,14 @@ pub async fn delete_download(download_id: i64) -> Result<usize, DBError> {
         WHERE id = ?1
         ",
             &[&download_id.to_string()],
-        ).map_err(|e| DBError::RusqliteError(e))
+        )
+        .map_err(|e| DBError::RusqliteError(e))
 }
 
-pub async fn change_download_status(download_id: &i64, status: &DownloadStatus) -> Result<usize, DBError> {
+pub async fn change_download_status(
+    download_id: &i64,
+    status: &DownloadStatus,
+) -> Result<usize, DBError> {
     let connection = connect().await?;
     connection
         .execute(
@@ -314,10 +349,14 @@ pub async fn change_download_status(download_id: &i64, status: &DownloadStatus) 
         WHERE id = ?2
         ",
             &[status.get_string(), &download_id.to_string()],
-        ).map_err(|e| DBError::RusqliteError(e))
+        )
+        .map_err(|e| DBError::RusqliteError(e))
 }
 
-pub async fn change_download_output_file_path(download_id: i64, output_file: &str) -> Result<(), DBError> {
+pub async fn change_download_output_file_path(
+    download_id: i64,
+    output_file: &str,
+) -> Result<(), DBError> {
     let mut download = get_download_by_id(download_id).await?;
     download.output_file = Some(output_file.to_string());
     update_download(&download).await?;
