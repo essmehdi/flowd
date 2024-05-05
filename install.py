@@ -26,21 +26,22 @@ def print_err(*args, **kwargs):
   print(*args, file=sys.stderr, **kwargs)
 
 def install(args):
-  target_dir = (SOURCE_DEBUG_TARGET_DIR if args.debug else SOURCE_RELEASE_TARGET_DIR)
-  target_path = os.path.join(target_dir, TARGET_FILENAME)
+  if not args.no_target:
+    target_dir = (SOURCE_DEBUG_TARGET_DIR if args.debug else SOURCE_RELEASE_TARGET_DIR)
+    target_path = os.path.join(target_dir, TARGET_FILENAME)
 
-  # Check if binary is compiled
-  if not os.path.exists(target_path):
-    print_err("Compile binary before installing")
-    print("Exiting...")
-    sys.exit(1)
+    # Check if binary is compiled
+    if not os.path.exists(target_path):
+      print_err("Compile binary before installing")
+      print("Exiting...")
+      sys.exit(1)
 
-  print("Installing target...")
-  target_install_path = os.path.join(args.install_path, TARGET_FILENAME)
-  if os.path.exists(target_install_path):
-    os.remove(target_install_path)
-  shutil.move(target_path, args.install_path)
-  files_to_clean.append(target_install_path)
+    print("Installing target...")
+    target_install_path = os.path.join(args.install_path, TARGET_FILENAME)
+    if os.path.exists(target_install_path):
+      os.remove(target_install_path)
+    shutil.move(target_path, args.install_path)
+    files_to_clean.append(target_install_path)
 
   # Create data dir
   if not os.path.exists(DATA_DIR):
@@ -72,6 +73,7 @@ def cleanup():
 parser = argparse.ArgumentParser("install.sh", description="Installer for flowd")
 parser.add_argument("-i", "--install-path", help="Binary install destination path", default=DEFAULT_INSTALL_DIR)
 parser.add_argument("-d", "--debug", action="store_true", help="Installs the debug binary instead of release binary")
+parser.add_argument("-n", "--no-target", action="store_true", help="Copies data files only without target")
 
 args = parser.parse_args()
 
