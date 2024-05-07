@@ -29,4 +29,7 @@ cargo build --release
 ./install.py
 ```
 
-`install.py` takes an argument `--install-path` or `-i` to change the installation path for the binary. The default path is `/usr/local/bin`
+`install.py` takes these arguments:
+- `--install-path` or `-i` to change the installation path for the binary. The default path is `/usr/local/bin`.
+- `--debug` or `-d` to install the debug target instead of the release target.
+- `--no-target` or `-n` to install only data files without copying the target.
